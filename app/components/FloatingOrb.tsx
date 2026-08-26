@@ -1,5 +1,6 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
+import { SoundFXService } from '../utils/audio';
 
 interface Particle {
   theta: number; // Longitude: 0 to 2*PI
@@ -578,6 +579,37 @@ export const FloatingOrb: React.FC = () => {
   const isListening = status === 'listening';
   const isSpeaking = status === 'speaking';
 
+  // Dynamic Thinking Phrases
+  const THINKING_PHRASES = [
+    'Checking...',
+    'Thinking...',
+    'Analyzing data...',
+    'Synthesizing answer...',
+    'Connecting intelligence...',
+  ];
+  const [thinkingPhraseIndex, setThinkingPhraseIndex] = useState(0);
+
+  useEffect(() => {
+    if (!isThinking) {
+      setThinkingPhraseIndex(0);
+      return;
+    }
+
+    // Play initial subtle thinking chime
+    if (deviceSettings?.soundEffects !== false) {
+      SoundFXService.getInstance().playChime('thinking');
+    }
+
+    const interval = setInterval(() => {
+      setThinkingPhraseIndex((prev) => (prev + 1) % THINKING_PHRASES.length);
+      if (deviceSettings?.soundEffects !== false) {
+        SoundFXService.getInstance().playChime('thinking');
+      }
+    }, 1800);
+
+    return () => clearInterval(interval);
+  }, [isThinking, deviceSettings?.soundEffects]);
+
   // Subtitle text for speech: only the currently spoken subtitle words
   const spokenSubtitle = speakingTranscript.trim();
 
@@ -626,8 +658,14 @@ export const FloatingOrb: React.FC = () => {
             )}
           </h1>
         ) : isThinking ? (
-          <h1 className="text-xl md:text-2xl lg:text-3xl font-semibold tracking-tight text-neutral-200 animate-pulse">
-            Thinking...
+          <h1 className="text-xl md:text-2xl lg:text-3xl font-semibold tracking-tight text-white flex items-center justify-center space-x-2">
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-white to-cyan-400 animate-pulse">
+              {THINKING_PHRASES[thinkingPhraseIndex]}
+            </span>
+            <span
+              className="inline-block w-2 h-2 rounded-full animate-ping"
+              style={{ backgroundColor: accentTheme.primary }}
+            />
           </h1>
         ) : (
           <h1 className="text-xl md:text-2xl lg:text-3xl font-semibold tracking-tight text-white hover:text-white/90 transition-colors">
