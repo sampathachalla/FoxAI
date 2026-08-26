@@ -60,6 +60,7 @@ export const FloatingOrb: React.FC = () => {
   const accentThemeRef = useRef(accentTheme);
   const isVoiceActiveRef = useRef(isVoiceActive);
   const ambientGlowEnabledRef = useRef(deviceSettings.ambientGlow);
+  const speakingTranscriptRef = useRef(speakingTranscript);
 
   useEffect(() => {
     statusRef.current = status;
@@ -68,7 +69,8 @@ export const FloatingOrb: React.FC = () => {
     accentThemeRef.current = accentTheme;
     isVoiceActiveRef.current = isVoiceActive;
     ambientGlowEnabledRef.current = deviceSettings.ambientGlow;
-  }, [status, audioLevel, frequencyData, accentTheme, isVoiceActive, deviceSettings.ambientGlow]);
+    speakingTranscriptRef.current = speakingTranscript;
+  }, [status, audioLevel, frequencyData, accentTheme, isVoiceActive, deviceSettings.ambientGlow, speakingTranscript]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -166,10 +168,11 @@ export const FloatingOrb: React.FC = () => {
 
       const curStatus = statusRef.current;
       const curAudio = audioLevelRef.current || 0;
-      const curActive = isVoiceActiveRef.current;
-      const isSpeaking = curStatus === 'speaking';
+      const curSpeakingTranscript = speakingTranscriptRef.current || '';
+      const isSpeaking = curStatus === 'speaking' || curSpeakingTranscript.trim().length > 0;
       const isListening = curStatus === 'listening';
-      const isThinking = curStatus === 'thinking';
+      const isThinking = curStatus === 'thinking' && !isSpeaking;
+      const curActive = isVoiceActiveRef.current || isSpeaking || isListening;
       const curFreq = frequencyDataRef.current;
       const currentTheme = accentThemeRef.current;
 
@@ -182,25 +185,25 @@ export const FloatingOrb: React.FC = () => {
       morphProgress += (targetMorph - morphProgress) * 0.045 * speedFactor;
 
       // Smooth cinematic time progression
-      time += 0.008 * speedFactor;
+      time += 0.009 * speedFactor;
 
       // Smooth exponential interpolation for audio level and speech energy
       smoothedAudioLevel += (curAudio - smoothedAudioLevel) * 0.10 * speedFactor;
 
       const targetSpeechEnergy = isSpeaking
-        ? Math.max(0.50, (smoothedAudioLevel || 0.30) * 1.8)
+        ? Math.max(0.70, (smoothedAudioLevel || 0.40) * 2.2)
         : isListening
-        ? Math.max(0.30, (smoothedAudioLevel || 0.15) * 1.4)
+        ? Math.max(0.35, (smoothedAudioLevel || 0.20) * 1.5)
         : 0.08;
-      smoothedSpeechEnergy += (targetSpeechEnergy - smoothedSpeechEnergy) * 0.065 * speedFactor;
+      smoothedSpeechEnergy += (targetSpeechEnergy - smoothedSpeechEnergy) * 0.085 * speedFactor;
 
-      // Cinematic slow wave speed (graceful, relaxed flow)
+      // Dynamic Acoustic wave phase speed
       const targetWaveSpeed = isSpeaking
-        ? 0.008 + smoothedAudioLevel * 0.014
+        ? 0.016 + smoothedAudioLevel * 0.022
         : isListening
-        ? 0.006 + smoothedAudioLevel * 0.010
+        ? 0.008 + smoothedAudioLevel * 0.012
         : 0.004;
-      smoothedWaveSpeed += (targetWaveSpeed - smoothedWaveSpeed) * 0.05 * speedFactor;
+      smoothedWaveSpeed += (targetWaveSpeed - smoothedWaveSpeed) * 0.06 * speedFactor;
       wavePhase += smoothedWaveSpeed * speedFactor;
 
       // Update Holo Pulses
@@ -334,35 +337,39 @@ export const FloatingOrb: React.FC = () => {
       for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
 
-        // 1. Pristine Pure Mathematical Sphere Geometry with Guaranteed Rich 3D Acoustic Waves
+        // 1. Pristine Pure Mathematical Sphere Geometry with Guaranteed Bold 3D Acoustic Waves
         let voiceSoundwave = 0;
         let acousticBrightness = 0;
 
         // Guaranteed active vocal cadence envelope during speech (never stays flat or static)
         const vocalCadence = isSpeaking
-          ? 0.55 + Math.sin(time * 3.0) * 0.22 + Math.cos(time * 5.2 + p.phi * 2.0) * 0.14 + (smoothedAudioLevel * 0.35)
+          ? 0.70 + Math.sin(time * 2.8) * 0.22 + Math.cos(time * 4.6 + p.phi * 2.0) * 0.18 + (smoothedAudioLevel * 0.45)
           : isListening
-          ? 0.35 + (smoothedAudioLevel * 0.6)
+          ? 0.40 + (smoothedAudioLevel * 0.65)
           : 0.06;
 
-        if (isSpeaking || isListening) {
-          // A. Visible Traveling Soundwaves rotating around longitude
-          const waveCircumference = Math.sin(p.theta * 3.0 - wavePhase * 1.8) * (vocalCadence * 24.0);
+        if (isSpeaking) {
+          // A. Strong, visible traveling circumferential soundwave circulating around the sphere (Longitude)
+          const waveCircumference = Math.sin(p.theta * 4.0 - time * 3.2) * (vocalCadence * 38.0);
 
-          // B. Vertical Soundwave Ripples cascading through latitude lines
-          const waveVertical = Math.cos(p.phi * 4.0 + wavePhase * 2.2) * (vocalCadence * 20.0);
+          // B. Cascading vertical latitude wave ripples (Pole to Equator)
+          const waveVertical = Math.cos(p.phi * 5.0 + time * 3.6) * (vocalCadence * 32.0);
 
-          // C. Equatorial Vocal Bulge (organic syllable breathing)
-          const voiceBulge = Math.cos(p.phi) * Math.sin(time * 2.6 + p.theta) * (vocalCadence * 16.0);
+          // C. Equatorial vocal speech breathing bulge
+          const voiceBulge = Math.cos(p.phi) * Math.sin(time * 2.4 + p.theta) * (vocalCadence * 26.0);
 
-          // D. Harmonic Resonance Flow (warm, organic, liquid)
-          const harmonicFlow = Math.sin(time * 4.0 + p.phi * 2.0 + p.theta * 2.0) * (vocalCadence * 7.5);
+          // D. Harmonic acoustic resonance
+          const harmonicFlow = Math.sin(time * 4.8 + p.phi * 3.0 + p.theta * 2.0) * (vocalCadence * 14.0);
 
           voiceSoundwave = waveCircumference + waveVertical + voiceBulge + harmonicFlow;
-          acousticBrightness = Math.min(1.0, 0.40 + vocalCadence * 0.55);
+          acousticBrightness = Math.min(1.0, 0.45 + vocalCadence * 0.55);
+        } else if (isListening) {
+          const waveListening = Math.sin(p.phi * 3.5 - time * 2.0) * (vocalCadence * 18.0) + Math.cos(p.theta * 3.0 - time * 1.6) * (vocalCadence * 16.0);
+          voiceSoundwave = waveListening;
+          acousticBrightness = 0.35 + vocalCadence * 0.45;
         } else {
           // Serene, continuous fluid breathing so sphere is always seamlessly alive and moving
-          const breath = Math.sin(time * 1.6 + p.phi * 1.5 + p.theta) * 3.6;
+          const breath = Math.sin(time * 1.6 + p.phi * 1.5 + p.theta) * 4.2;
           voiceSoundwave = breath;
           acousticBrightness = 0.15;
         }
@@ -451,12 +458,12 @@ export const FloatingOrb: React.FC = () => {
           }
         }
 
-        // 7. Dynamic Palette Bound to #99FFFF Theme
-        const normalizedElevation = (y0 + baseSphereRadius) / (baseSphereRadius * 2);
-        let rColor: number;
-        let gColor: number;
-        let bColor: number;
-        let pSize = 1.45 * scale;
+        // 7. Particle Color & Sizing Calculation
+        const normalizedElevation = (p.phi + Math.PI / 2) / Math.PI;
+        let rColor = rgbPrimary.r;
+        let gColor = rgbPrimary.g;
+        let bColor = rgbPrimary.b;
+        let pSize = 1.4 * scale;
         let alpha = 0.55 + scale * 0.35;
 
         if (isPulseActive) {
@@ -494,12 +501,12 @@ export const FloatingOrb: React.FC = () => {
           // Central Sphere Core Coloring (#99FFFF)
           if (isSpeaking) {
             // High energy luminescent wave peak coloring when talking
-            const peakGlow = acousticBrightness;
-            rColor = Math.min(255, Math.floor(rgbPrimary.r + (255 - rgbPrimary.r) * peakGlow * 0.85));
-            gColor = Math.min(255, Math.floor(rgbPrimary.g + (255 - rgbPrimary.g) * peakGlow * 0.85));
-            bColor = Math.min(255, Math.floor(rgbPrimary.b + (255 - rgbPrimary.b) * peakGlow * 0.85));
-            pSize = (1.5 + peakGlow * 1.2) * scale;
-            alpha = Math.min(1.0, 0.65 + peakGlow * 0.35);
+            const crestIntensity = Math.min(1.0, Math.max(0, voiceSoundwave + 20) / 60);
+            rColor = Math.min(255, Math.floor(rgbPrimary.r + (255 - rgbPrimary.r) * crestIntensity));
+            gColor = Math.min(255, Math.floor(rgbPrimary.g + (255 - rgbPrimary.g) * crestIntensity));
+            bColor = 255;
+            pSize = (1.5 + crestIntensity * 1.8) * scale;
+            alpha = Math.min(1.0, 0.70 + crestIntensity * 0.30);
           } else if (normalizedElevation > 0.65 || (curActive && curAudio > 0.35)) {
             const peakGlow = curActive ? acousticBrightness : 0.25;
             rColor = Math.min(255, Math.floor(rgbPrimary.r + (255 - rgbPrimary.r) * peakGlow));
