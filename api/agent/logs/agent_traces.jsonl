@@ -1,0 +1,1 @@
+{"type": "complete", "success": true, "durationMs": 7000, "events": [{"type": "start", "prompt": "Calculate 15 * 8 and check system status", "timestamp": "2026-08-26T18:54:02.767430Z"}, {"type": "step", "step": 1, "thought": "", "tool_calls": [], "observations": [], "elapsedMs": 7000}], "timestamp": "2026-08-26T18:54:09.768024Z"}
