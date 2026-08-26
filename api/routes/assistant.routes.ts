@@ -6,9 +6,13 @@ import {
   handleAssistantTools,
   handleDeepgramTTS,
   handleGetDeepgramVoices,
+  handleHermesAgent,
 } from '../controllers/assistant.controller';
 
 const router = Router();
+
+// Autonomous Hermes Agent endpoint (Multi-step reasoning & tool execution)
+router.post('/agent', handleHermesAgent);
 
 // Chat completion endpoint (with tools & search grounding)
 router.post('/chat', handleAssistantChat);

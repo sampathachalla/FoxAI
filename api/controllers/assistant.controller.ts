@@ -184,3 +184,49 @@ export async function handleAssistantTools(req: Request, res: Response): Promise
       });
   }
 }
+
+export async function handleHermesAgent(req: Request, res: Response): Promise<void> {
+  try {
+    const { prompt, history, model, provider, systemPrompt, temperature } = req.body;
+
+    if (!prompt || typeof prompt !== 'string') {
+      res.status(400).json({ error: 'Prompt is required and must be a string.' });
+      return;
+    }
+
+    const { getHermesAgent } = await import('../agent');
+    const agent = getHermesAgent({
+      model,
+      provider,
+      systemPrompt,
+      temperature,
+    });
+
+    const agentHistory = Array.isArray(history)
+      ? history.map((h: any) => ({
+          role: h.role === 'user' ? 'user' : 'assistant',
+          content: h.content,
+        }))
+      : [];
+
+    const result = await agent.run(prompt, agentHistory);
+
+    res.json({
+      success: true,
+      data: {
+        text: result.text,
+        thought: result.thought,
+        steps: result.steps,
+        toolsExecuted: result.toolsExecuted,
+        durationMs: result.durationMs,
+        timestamp: Date.now(),
+      },
+    });
+  } catch (error: any) {
+    console.error('[Hermes Controller] Error in handleHermesAgent:', error);
+    res.status(500).json({
+      success: false,
+      error: error?.message || 'Hermes Agent execution failed',
+    });
+  }
+}
