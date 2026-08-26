@@ -81,13 +81,14 @@ export const FloatingOrb: React.FC = () => {
     let wavePhase = 0;
     let morphProgress = 0; // 0 = Pure Round Sphere, 1 = J.A.R.V.I.S. Orbital Rings around Central Sphere
     let currentYaw = 0;
-    let currentPitch = 0.12;
+    let currentPitch = 0.10;
+    let lastFrameTimestamp = performance.now();
 
     // Continuous Fluid Physics & Smoothing Variables
     let smoothedSpeechEnergy = 0.10;
-    let smoothedWaveSpeed = 0.008;
+    let smoothedWaveSpeed = 0.004;
     let smoothedAudioLevel = 0;
-    let smoothedYawSpeed = 0.0034;
+    let smoothedYawSpeed = 0.0020;
     let smoothedGlowAlpha = 0.25;
 
     // --- Generate 3D Particles for Central Sphere & Orbital Rings ---
@@ -122,7 +123,7 @@ export const FloatingOrb: React.FC = () => {
     const holoPulses: HoloPulse[] = Array.from({ length: 16 }, (_, i) => ({
       ringIndex: (i % 2) + 3,
       angle: (i * 0.45) % (Math.PI * 2),
-      speed: 0.024 + (i % 2) * 0.015,
+      speed: 0.016 + (i % 2) * 0.010,
       size: 2.0 + (i % 2) * 0.9,
       colorType: i % 3 === 0 ? 'primary' : i % 3 === 1 ? 'white' : 'secondary',
     }));
@@ -158,6 +159,11 @@ export const FloatingOrb: React.FC = () => {
     }
 
     const render = () => {
+      const now = performance.now();
+      const dt = Math.min(0.05, (now - lastFrameTimestamp) / 1000);
+      lastFrameTimestamp = now;
+      const speedFactor = dt * 60; // Normalized 60fps delta multiplier
+
       const curStatus = statusRef.current;
       const curAudio = audioLevelRef.current || 0;
       const curActive = isVoiceActiveRef.current;
@@ -173,42 +179,42 @@ export const FloatingOrb: React.FC = () => {
 
       // Morph progress: Smoothly activates J.A.R.V.I.S. orbital HUD when thinking
       const targetMorph = isThinking ? 1.0 : 0.0;
-      morphProgress += (targetMorph - morphProgress) * 0.055;
+      morphProgress += (targetMorph - morphProgress) * 0.045 * speedFactor;
 
-      // Smooth time progression
-      time += 0.012;
+      // Smooth cinematic time progression
+      time += 0.008 * speedFactor;
 
       // Smooth exponential interpolation for audio level and speech energy
-      smoothedAudioLevel += (curAudio - smoothedAudioLevel) * 0.12;
+      smoothedAudioLevel += (curAudio - smoothedAudioLevel) * 0.10 * speedFactor;
 
       const targetSpeechEnergy = isSpeaking
-        ? Math.max(0.60, (smoothedAudioLevel || 0.35) * 2.2)
+        ? Math.max(0.50, (smoothedAudioLevel || 0.30) * 1.8)
         : isListening
-        ? Math.max(0.35, (smoothedAudioLevel || 0.2) * 1.6)
-        : 0.10;
-      smoothedSpeechEnergy += (targetSpeechEnergy - smoothedSpeechEnergy) * 0.085;
+        ? Math.max(0.30, (smoothedAudioLevel || 0.15) * 1.4)
+        : 0.08;
+      smoothedSpeechEnergy += (targetSpeechEnergy - smoothedSpeechEnergy) * 0.065 * speedFactor;
 
-      // Dynamic Acoustic wave phase speed (smooth, rhythmic, perfectly matched to audio cadence)
+      // Cinematic slow wave speed (graceful, relaxed flow)
       const targetWaveSpeed = isSpeaking
-        ? 0.012 + smoothedAudioLevel * 0.024
+        ? 0.008 + smoothedAudioLevel * 0.014
         : isListening
-        ? 0.009 + smoothedAudioLevel * 0.016
-        : 0.006;
-      smoothedWaveSpeed += (targetWaveSpeed - smoothedWaveSpeed) * 0.06;
-      wavePhase += smoothedWaveSpeed;
+        ? 0.006 + smoothedAudioLevel * 0.010
+        : 0.004;
+      smoothedWaveSpeed += (targetWaveSpeed - smoothedWaveSpeed) * 0.05 * speedFactor;
+      wavePhase += smoothedWaveSpeed * speedFactor;
 
       // Update Holo Pulses
       holoPulses.forEach((pulse) => {
-        pulse.angle = (pulse.angle + pulse.speed * (isThinking ? 1.8 : 1.0)) % (Math.PI * 2);
+        pulse.angle = (pulse.angle + pulse.speed * (isThinking ? 1.4 : 0.8) * speedFactor) % (Math.PI * 2);
       });
 
-      // Smooth continuous 3D rotation without snapping
-      const targetYawSpeed = isSpeaking ? 0.0046 : isThinking ? 0.0062 : 0.0034;
-      smoothedYawSpeed += (targetYawSpeed - smoothedYawSpeed) * 0.05;
+      // Cinematic slow continuous 3D rotation
+      const targetYawSpeed = isSpeaking ? 0.0028 : isThinking ? 0.0036 : 0.0020;
+      smoothedYawSpeed += (targetYawSpeed - smoothedYawSpeed) * 0.04 * speedFactor;
 
       if (!isDragging) {
-        currentYaw += smoothedYawSpeed;
-        currentPitch = 0.12 + Math.sin(time * 0.25) * 0.025;
+        currentYaw += smoothedYawSpeed * speedFactor;
+        currentPitch = 0.10 + Math.sin(time * 0.3) * 0.02;
       }
 
       const dpr = window.devicePixelRatio || 1;
@@ -328,7 +334,7 @@ export const FloatingOrb: React.FC = () => {
       for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
 
-        // 1. Pristine Pure Mathematical Sphere Geometry with 1:1 audio-synchronized soundwaves
+        // 1. Pristine Pure Mathematical Sphere Geometry with Cinematic Silky Slow Soundwaves
         let voiceSoundwave = 0;
         let acousticBrightness = 0;
 
@@ -339,29 +345,26 @@ export const FloatingOrb: React.FC = () => {
         const bandGain = rawFreq / 255;
 
         // Dynamic audio amplitude (when quiet or between words, waves naturally subside; when talking/loud, waves swell)
-        const activeSoundLevel = Math.max(smoothedAudioLevel * 1.5, curActive ? 0.22 : 0.04);
+        const activeSoundLevel = Math.max(smoothedAudioLevel * 1.3, curActive ? 0.18 : 0.03);
 
-        if (speechEnergy > 0.18) {
-          // A. Audio-synchronized Circumferential Waves (rotates smoothly around sphere with spoken cadence)
-          const waveCircumference = Math.sin(p.theta * 3.0 - wavePhase * 1.8) * (activeSoundLevel * 20.0 + 3.0);
+        if (speechEnergy > 0.15) {
+          // A. Cinematic Slow Circumferential Waves (rotates smoothly and elegantly around sphere)
+          const waveCircumference = Math.sin(p.theta * 2.5 - wavePhase * 1.3) * (activeSoundLevel * 16.0 + 2.5);
 
-          // B. Audio-reactive Vertical Latitude Undulation (reacts to voice pitch and FFT frequencies)
-          const waveVertical = Math.cos(p.phi * 4.0 + wavePhase * 2.0) * (activeSoundLevel * 16.0 + bandGain * 8.0);
+          // B. Gentle Vertical Latitude Undulation (reacts smoothly to voice pitch and harmonics)
+          const waveVertical = Math.cos(p.phi * 3.5 + wavePhase * 1.5) * (activeSoundLevel * 13.0 + bandGain * 6.0);
 
-          // C. Vocal Breathing Core Bulge (expands synchronously on vowels and spoken words)
-          const voiceBulge = Math.cos(p.phi) * Math.sin(time * 3.0 + p.theta) * (activeSoundLevel * 14.0);
+          // C. Vocal Breathing Core (slow, graceful expansion on spoken words)
+          const voiceBulge = Math.cos(p.phi) * Math.sin(time * 2.0 + p.theta * 0.5) * (activeSoundLevel * 11.0);
 
-          // D. Smooth harmonic vocal resonance (warm, organic, synchronized to audio)
-          const harmonicRipple = Math.sin(time * 5.0 + p.phi * 2.5 + p.theta * 2.0) * (activeSoundLevel * 6.0);
+          // D. Smooth Harmonic Shimmer (warm, organic, fluid)
+          const harmonicFlow = Math.sin(time * 3.0 + p.phi * 2.0 + p.theta * 1.5) * (activeSoundLevel * 4.5);
 
-          // E. FFT Frequency band lift
-          const freqLift = bandGain * (activeSoundLevel * 12.0 + 3.0) * Math.cos(p.phi);
-
-          voiceSoundwave = waveCircumference + waveVertical + voiceBulge + harmonicRipple + freqLift;
-          acousticBrightness = Math.min(1.0, 0.35 + activeSoundLevel * 0.55 + bandGain * 0.2);
+          voiceSoundwave = waveCircumference + waveVertical + voiceBulge + harmonicFlow;
+          acousticBrightness = Math.min(1.0, 0.30 + activeSoundLevel * 0.50 + bandGain * 0.18);
         } else {
-          // Gentle continuous fluid breathing when idle so sphere is always seamlessly alive
-          const breath = Math.sin(time * 2.0 + p.phi * 2.0 + p.theta * 2.0) * 3.0;
+          // Serene, continuous fluid breathing so sphere is never stagnant or stuck
+          const breath = Math.sin(time * 1.4 + p.phi * 1.5 + p.theta) * 3.2;
           voiceSoundwave = breath;
           acousticBrightness = 0.15;
         }
