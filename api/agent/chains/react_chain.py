@@ -13,16 +13,22 @@ class ReActChain:
         self.tracer = tracer
         self.max_iterations = max_iterations
 
-    async def execute(self, messages: List[Dict[str, str]]) -> Tuple[str, str, List[StepTrace], List[ToolCall]]:
+    async def execute(self, messages: List[Dict[str, str]]) -> Tuple[str, str, List[StepTrace], List[ToolCall], Dict[str, int]]:
         steps: List[StepTrace] = []
         all_tools_executed: List[ToolCall] = []
         primary_thought = ""
         final_answer = ""
+        total_input_tokens = 0
+        total_output_tokens = 0
 
         conversation = list(messages)
 
         for iteration in range(1, self.max_iterations + 1):
-            raw_output = await self.llm.generate(conversation)
+            gen_res = await self.llm.generate_with_usage(conversation)
+            raw_output = gen_res["text"]
+            total_input_tokens += gen_res.get("inputTokens", 0)
+            total_output_tokens += gen_res.get("outputTokens", 0)
+
             parsed = HermesParser.parse_output(raw_output)
 
             if parsed["thought"] and not primary_thought:
@@ -85,4 +91,10 @@ class ReActChain:
         if not final_answer:
             final_answer = steps[-1].rawOutput if steps else "Execution complete."
 
-        return final_answer, primary_thought, steps, all_tools_executed
+        token_usage = {
+            "inputTokens": total_input_tokens,
+            "outputTokens": total_output_tokens,
+            "totalTokens": total_input_tokens + total_output_tokens
+        }
+
+        return final_answer, primary_thought, steps, all_tools_executed, token_usage

@@ -57,6 +57,9 @@ export const SettingsView: React.FC = () => {
     headerQuickOptions,
     setHeaderQuickOptions,
     deviceSettings,
+    engineTelemetry,
+    voiceTelemetry,
+    resetTelemetry,
   } = useVoiceAssistant();
 
   const [editingHeaderSlot, setEditingHeaderSlot] = useState<number | null>(null);
@@ -939,6 +942,200 @@ export const SettingsView: React.FC = () => {
             >
               {/* Provider & Model Selection Matrix */}
               <ModelSelectorDropdown variant="embedded" />
+
+              {/* Live Intelligence Core & Token Telemetry Dashboard */}
+              <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <Activity className="w-4 h-4 text-cyan-400" />
+                      <h3 className="text-sm font-semibold text-white">Agent & LLM Token Telemetry</h3>
+                    </div>
+                    <p className="text-xs text-neutral-400">
+                      Real-time accounting of input prompt tokens, output reasoning completions, and tool executions.
+                    </p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-[10px] font-mono px-2.5 py-1 rounded-full border border-cyan-500/30 text-cyan-300 bg-cyan-500/10 flex items-center space-x-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                      <span>Live Telemetry Active</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => resetTelemetry()}
+                      className="px-2.5 py-1 rounded-xl text-[10px] font-mono text-neutral-400 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-all flex items-center space-x-1 cursor-pointer"
+                      title="Reset token metrics"
+                    >
+                      <RotateCcw className="w-2.5 h-2.5" />
+                      <span>Reset</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Primary 3-Metric Token Counter Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Input Tokens */}
+                  <div className="p-4 rounded-2xl bg-cyan-950/20 border border-cyan-500/20 space-y-1">
+                    <div className="text-[11px] font-medium text-cyan-300/80 flex items-center justify-between">
+                      <span>Input / Prompt Tokens</span>
+                      <Terminal className="w-3.5 h-3.5 text-cyan-400" />
+                    </div>
+                    <div className="text-2xl font-bold font-mono text-white">
+                      {(engineTelemetry?.inputTokens || 0).toLocaleString()}
+                    </div>
+                    <div className="text-[10px] text-neutral-400">
+                      User queries, chat history & tool schemas
+                    </div>
+                  </div>
+
+                  {/* Output Tokens */}
+                  <div className="p-4 rounded-2xl bg-purple-950/20 border border-purple-500/20 space-y-1">
+                    <div className="text-[11px] font-medium text-purple-300/80 flex items-center justify-between">
+                      <span>Output / Completion Tokens</span>
+                      <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                    </div>
+                    <div className="text-2xl font-bold font-mono text-white">
+                      {(engineTelemetry?.outputTokens || 0).toLocaleString()}
+                    </div>
+                    <div className="text-[10px] text-neutral-400">
+                      Hermes thoughts & answers generated
+                    </div>
+                  </div>
+
+                  {/* Total Tokens */}
+                  <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/[0.12] space-y-1">
+                    <div className="text-[11px] font-medium text-neutral-300 flex items-center justify-between">
+                      <span>Total Consumed</span>
+                      <Cpu className="w-3.5 h-3.5 text-neutral-400" />
+                    </div>
+                    <div
+                      className="text-2xl font-bold font-mono text-white"
+                      style={{ color: accentTheme.primary }}
+                    >
+                      {(engineTelemetry?.totalTokens || 0).toLocaleString()}
+                    </div>
+                    <div className="text-[10px] text-neutral-400">
+                      Across all conversation threads
+                    </div>
+                  </div>
+                </div>
+
+                {/* Token Distribution Bar */}
+                {(engineTelemetry?.totalTokens || 0) > 0 && (
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex justify-between text-[10px] font-mono text-neutral-400">
+                      <span className="text-cyan-300">
+                        Input: {Math.round(((engineTelemetry?.inputTokens || 0) / (engineTelemetry?.totalTokens || 1)) * 100)}%
+                      </span>
+                      <span className="text-purple-300">
+                        Output: {Math.round(((engineTelemetry?.outputTokens || 0) / (engineTelemetry?.totalTokens || 1)) * 100)}%
+                      </span>
+                    </div>
+                    <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden flex">
+                      <div
+                        className="bg-cyan-400 transition-all duration-500"
+                        style={{
+                          width: `${Math.max(5, Math.round(((engineTelemetry?.inputTokens || 0) / (engineTelemetry?.totalTokens || 1)) * 100))}%`,
+                        }}
+                      />
+                      <div
+                        className="bg-purple-400 transition-all duration-500"
+                        style={{
+                          width: `${Math.max(5, Math.round(((engineTelemetry?.outputTokens || 0) / (engineTelemetry?.totalTokens || 1)) * 100))}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Performance & Execution Row */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-white/[0.06]">
+                  <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05]">
+                    <div className="text-[10px] text-neutral-400">Requests Processed</div>
+                    <div className="text-sm font-semibold font-mono text-white">
+                      {engineTelemetry?.requestCount || 0}
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05]">
+                    <div className="text-[10px] text-neutral-400">Tools Executed</div>
+                    <div className="text-sm font-semibold font-mono text-white">
+                      {engineTelemetry?.toolInvocationsCount || 0} calls
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05]">
+                    <div className="text-[10px] text-neutral-400">Avg Latency</div>
+                    <div className="text-sm font-semibold font-mono text-white">
+                      {engineTelemetry?.requestCount
+                        ? Math.round(engineTelemetry.totalLatencyMs / engineTelemetry.requestCount)
+                        : 0}{' '}
+                      ms
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05]">
+                    <div className="text-[10px] text-neutral-400">Last Query</div>
+                    <div className="text-sm font-semibold font-mono text-emerald-400 truncate">
+                      {engineTelemetry?.lastRequestTokens
+                        ? `+${engineTelemetry.lastRequestTokens.total} tok (${engineTelemetry.lastRequestTokens.durationMs}ms)`
+                        : 'Ready'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Voice & Speech Models Telemetry Dashboard */}
+              <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <Mic className="w-4 h-4 text-emerald-400" />
+                      <h3 className="text-sm font-semibold text-white">Voice & Speech Models Telemetry</h3>
+                    </div>
+                    <p className="text-xs text-neutral-400">
+                      Real-time usage metrics for Deepgram Aura TTS neural synthesis and Web Speech recognition.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {/* TTS Characters */}
+                  <div className="p-3.5 rounded-2xl bg-emerald-950/20 border border-emerald-500/20 space-y-1">
+                    <div className="text-[10px] text-emerald-300/80 font-medium">TTS Characters Spoken</div>
+                    <div className="text-lg font-bold font-mono text-white">
+                      {(voiceTelemetry?.ttsCharactersSynthesized || 0).toLocaleString()}
+                    </div>
+                    <div className="text-[9px] text-neutral-400">Neural vocalizations</div>
+                  </div>
+
+                  {/* TTS Audio Duration */}
+                  <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.08] space-y-1">
+                    <div className="text-[10px] text-neutral-300 font-medium">Audio Time Generated</div>
+                    <div className="text-lg font-bold font-mono text-white">
+                      {voiceTelemetry?.ttsAudioSecondsGenerated || 0}s
+                    </div>
+                    <div className="text-[9px] text-neutral-400">
+                      ~{Math.round(((voiceTelemetry?.ttsAudioSecondsGenerated || 0) / 60) * 10) / 10} minutes
+                    </div>
+                  </div>
+
+                  {/* STT Words Spoken */}
+                  <div className="p-3.5 rounded-2xl bg-amber-950/20 border border-amber-500/20 space-y-1">
+                    <div className="text-[10px] text-amber-300/80 font-medium">User Words Transcribed</div>
+                    <div className="text-lg font-bold font-mono text-white">
+                      {(voiceTelemetry?.sttSpokenWords || 0).toLocaleString()}
+                    </div>
+                    <div className="text-[9px] text-neutral-400">Microphone speech input</div>
+                  </div>
+
+                  {/* Voice Syntheses Count */}
+                  <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.08] space-y-1">
+                    <div className="text-[10px] text-neutral-300 font-medium">Speech Sessions</div>
+                    <div className="text-lg font-bold font-mono text-white">
+                      {voiceTelemetry?.ttsSynthesisCount || 0} calls
+                    </div>
+                    <div className="text-[9px] text-neutral-400">Duplex voice responses</div>
+                  </div>
+                </div>
+              </div>
 
               {/* Persona / Behavioral Presets */}
               <div className="space-y-3">

@@ -46,7 +46,7 @@ class HermesAgent(BaseAgent):
         messages.extend([{"role": h.get("role", "user"), "content": h.get("content", "")} for h in history])
         messages.append({"role": "user", "content": prompt})
 
-        final_text, thought, steps, tools_executed = await self.chain.execute(messages)
+        final_text, thought, steps, tools_executed, token_usage = await self.chain.execute(messages)
 
         duration_ms = int((time.time() - start_time) * 1000)
         self.tracer.end_trace(final_text, success=True)
@@ -60,5 +60,6 @@ class HermesAgent(BaseAgent):
             "thought": thought,
             "steps": [s.dict() for s in steps],
             "toolsExecuted": [t.dict() for t in tools_executed],
+            "tokens": token_usage,
             "durationMs": duration_ms
         }

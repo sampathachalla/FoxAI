@@ -17,6 +17,8 @@ import {
   EnginePreferences,
   HeaderQuickOptionId,
   DeepgramVoiceItem,
+  EngineTelemetry,
+  VoiceTelemetry,
 } from '../types';
 import { StorageService } from '../services/storage';
 import { fetchAssistantChat, fetchDeepgramTTS, fetchDeepgramVoices, fetchSystemStatus } from '../services/api';
@@ -83,6 +85,11 @@ interface AssistantContextType {
   isQuickAccessOpen: boolean;
   setIsQuickAccessOpen: (open: boolean) => void;
   toggleQuickAccess: () => void;
+
+  // Telemetry Metrics
+  engineTelemetry: EngineTelemetry;
+  voiceTelemetry: VoiceTelemetry;
+  resetTelemetry: () => void;
 
   setAccentTheme: (theme: AccentTheme) => void;
   setVoicePrefs: (prefs: VoicePreference) => void;
@@ -201,6 +208,16 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [deepgramVoices, setDeepgramVoices] = useState<DeepgramVoiceItem[]>([]);
   const [hasDeepgramKey, setHasDeepgramKey] = useState<boolean>(false);
   const [isSynthesizingTTS, setIsSynthesizingTTS] = useState<boolean>(false);
+
+  // Telemetry state
+  const [engineTelemetry, setEngineTelemetry] = useState<EngineTelemetry>(() => StorageService.loadEngineTelemetry());
+  const [voiceTelemetry, setVoiceTelemetry] = useState<VoiceTelemetry>(() => StorageService.loadVoiceTelemetry());
+
+  const resetTelemetry = useCallback(() => {
+    const res = StorageService.resetAllTelemetry();
+    setEngineTelemetry(res.engine);
+    setVoiceTelemetry(res.voice);
+  }, []);
 
   // Services references
   const audioAnalyserRef = useRef<AudioAnalyserService>(new AudioAnalyserService());
@@ -530,6 +547,12 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
 
       cancelSpeaking();
+      // Record TTS telemetry
+      const wordCount = text.split(/\s+/).filter(Boolean).length;
+      const estimatedSecs = Math.max(0.5, Math.round(wordCount * 0.28 * 10) / 10);
+      const updatedVoice = StorageService.recordVoiceTTS(text.length, estimatedSecs);
+      setVoiceTelemetry(updatedVoice);
+
       // Keep status as 'thinking' while TTS is synthesizing/fetching over network
       setStatus('thinking');
       setSpeakingTranscript('');
@@ -633,6 +656,11 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       audioAnalyserRef.current.stopMicrophone();
       speechSimulatorRef.current.stop();
 
+      // Record STT Telemetry
+      const wordCount = cleanPrompt.split(/\s+/).filter(Boolean).length;
+      const updatedVoice = StorageService.recordVoiceSTT(wordCount, cleanPrompt.length);
+      setVoiceTelemetry(updatedVoice);
+
       const userMsg: ChatMessage = {
         id: 'msg_' + Date.now(),
         role: 'user',
@@ -677,6 +705,22 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           const fullText = response.data.text;
           const toolsDetected = response.data.toolsDetected;
           const sources = response.data.sources;
+
+          // Record Engine Tokens & Telemetry
+          if (response.data.tokens) {
+            const updatedEngine = StorageService.recordEngineUsage(
+              response.data.tokens.inputTokens || 0,
+              response.data.tokens.outputTokens || 0,
+              (toolsDetected || []).length,
+              response.data.durationMs || 0
+            );
+            setEngineTelemetry(updatedEngine);
+          } else {
+            const inTok = Math.max(1, Math.round(cleanPrompt.length / 3.8));
+            const outTok = Math.max(1, Math.round((fullText || '').length / 3.8));
+            const updatedEngine = StorageService.recordEngineUsage(inTok, outTok, (toolsDetected || []).length, 650);
+            setEngineTelemetry(updatedEngine);
+          }
 
           if (toolsDetected && toolsDetected.length > 0) {
             handleToolExecutions(toolsDetected);
@@ -897,6 +941,9 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         openSettingsTab,
         enginePrefs,
         setEnginePrefs,
+        engineTelemetry,
+        voiceTelemetry,
+        resetTelemetry,
         sessions,
         activeSessionId,
         isSidebarOpen,

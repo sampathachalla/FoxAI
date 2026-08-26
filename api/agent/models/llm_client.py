@@ -10,7 +10,7 @@ class LLMClient:
         self.openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY) if settings.OPENAI_API_KEY else None
         self.gemini_key = settings.GEMINI_API_KEY
 
-    async def generate(self, messages: List[Dict[str, str]]) -> str:
+    async def generate_with_usage(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
         if self.openai_client:
             target_model = self.model if ("gpt" in self.model or self.model.startswith("o")) else "gpt-4o-mini"
             is_nano_or_reasoning = "nano" in target_model or target_model.startswith("o1") or target_model.startswith("o3")
@@ -25,7 +25,18 @@ class LLMClient:
                 params["temperature"] = self.temperature
 
             response = await self.openai_client.chat.completions.create(**params)
-            return response.choices[0].message.content or ""
+            content = response.choices[0].message.content or ""
+            usage = response.usage
+            in_tok = usage.prompt_tokens if usage else sum(len(m.get("content", "").split()) * 4 // 3 for m in messages)
+            out_tok = usage.completion_tokens if usage else len(content.split()) * 4 // 3
+
+            return {
+                "text": content,
+                "inputTokens": in_tok,
+                "outputTokens": out_tok,
+                "totalTokens": in_tok + out_tok,
+                "model": target_model
+            }
 
         if self.gemini_key:
             target_model = self.model if "gemini" in self.model else "gemini-2.5-flash"
@@ -45,7 +56,21 @@ class LLMClient:
                 if res.status_code == 200:
                     data = res.json()
                     candidates = data.get("candidates", [])
-                    if candidates:
-                        return candidates[0]["content"]["parts"][0]["text"]
+                    content = candidates[0]["content"]["parts"][0]["text"] if candidates else ""
+                    usage_meta = data.get("usageMetadata", {})
+                    in_tok = usage_meta.get("promptTokenCount", sum(len(m.get("content", "").split()) * 4 // 3 for m in messages))
+                    out_tok = usage_meta.get("candidatesTokenCount", len(content.split()) * 4 // 3)
+
+                    return {
+                        "text": content,
+                        "inputTokens": in_tok,
+                        "outputTokens": out_tok,
+                        "totalTokens": in_tok + out_tok,
+                        "model": target_model
+                    }
 
         raise RuntimeError("No LLM credentials configured in environment.")
+
+    async def generate(self, messages: List[Dict[str, str]]) -> str:
+        res = await self.generate_with_usage(messages)
+        return res["text"]

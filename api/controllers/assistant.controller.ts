@@ -51,6 +51,12 @@ export async function handleAssistantChat(req: Request, res: Response): Promise<
             thought: pyResult.data.thought || '',
             steps: pyResult.data.steps || [],
             toolsDetected,
+            tokens: pyResult.data.tokens || {
+              inputTokens: Math.max(1, Math.round(prompt.length / 3.8)),
+              outputTokens: Math.max(1, Math.round((pyResult.data.text || '').length / 3.8)),
+              totalTokens: Math.max(2, Math.round((prompt.length + (pyResult.data.text || '').length) / 3.8)),
+            },
+            durationMs: pyResult.data.durationMs || 0,
             sources: [],
             isQuotaFallback: false,
             timestamp: Date.now(),

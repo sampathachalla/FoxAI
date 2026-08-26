@@ -4,7 +4,15 @@ export interface AssistantChatResponse {
   success: boolean;
   data?: {
     text: string;
+    thought?: string;
+    steps?: any[];
     toolsDetected?: AssistantToolCall[];
+    tokens?: {
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+    };
+    durationMs?: number;
     sources?: { title: string; url: string }[];
     timestamp: number;
   };

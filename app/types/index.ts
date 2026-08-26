@@ -123,3 +123,29 @@ export interface HeaderQuickOptionDef {
   description: string;
   iconName: string;
 }
+
+export interface EngineTelemetry {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  requestCount: number;
+  toolInvocationsCount: number;
+  totalLatencyMs: number;
+  lastRequestTokens?: {
+    input: number;
+    output: number;
+    total: number;
+    durationMs: number;
+  };
+  lastUpdated: number;
+}
+
+export interface VoiceTelemetry {
+  ttsCharactersSynthesized: number;
+  ttsAudioSecondsGenerated: number;
+  ttsSynthesisCount: number;
+  sttSpokenWords: number;
+  sttSpokenCharacters: number;
+  sttSessionCount: number;
+  lastUpdated: number;
+}

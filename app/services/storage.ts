@@ -11,6 +11,8 @@ import {
   SettingsTab,
   EnginePreferences,
   HeaderQuickOptionId,
+  EngineTelemetry,
+  VoiceTelemetry,
 } from '../types';
 import { ACCENT_THEMES } from '../utils/formatters';
 
@@ -433,5 +435,120 @@ export const StorageService = {
     try {
       localStorage.setItem(STORAGE_KEYS.HEADER_QUICK_OPTIONS, JSON.stringify(options.slice(0, 3)));
     } catch (e) {}
+  },
+
+  loadEngineTelemetry(): EngineTelemetry {
+    try {
+      const data = localStorage.getItem('fox_engine_telemetry_v1');
+      if (data) return JSON.parse(data);
+    } catch (e) {}
+    return {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      requestCount: 0,
+      toolInvocationsCount: 0,
+      totalLatencyMs: 0,
+      lastUpdated: Date.now(),
+    };
+  },
+
+  saveEngineTelemetry(t: EngineTelemetry) {
+    try {
+      localStorage.setItem('fox_engine_telemetry_v1', JSON.stringify(t));
+    } catch (e) {}
+  },
+
+  recordEngineUsage(inputTokens: number, outputTokens: number, toolCount: number = 0, latencyMs: number = 0): EngineTelemetry {
+    const current = this.loadEngineTelemetry();
+    const updated: EngineTelemetry = {
+      inputTokens: current.inputTokens + inputTokens,
+      outputTokens: current.outputTokens + outputTokens,
+      totalTokens: current.totalTokens + inputTokens + outputTokens,
+      requestCount: current.requestCount + 1,
+      toolInvocationsCount: current.toolInvocationsCount + toolCount,
+      totalLatencyMs: current.totalLatencyMs + latencyMs,
+      lastRequestTokens: {
+        input: inputTokens,
+        output: outputTokens,
+        total: inputTokens + outputTokens,
+        durationMs: latencyMs,
+      },
+      lastUpdated: Date.now(),
+    };
+    this.saveEngineTelemetry(updated);
+    return updated;
+  },
+
+  loadVoiceTelemetry(): VoiceTelemetry {
+    try {
+      const data = localStorage.getItem('fox_voice_telemetry_v1');
+      if (data) return JSON.parse(data);
+    } catch (e) {}
+    return {
+      ttsCharactersSynthesized: 0,
+      ttsAudioSecondsGenerated: 0,
+      ttsSynthesisCount: 0,
+      sttSpokenWords: 0,
+      sttSpokenCharacters: 0,
+      sttSessionCount: 0,
+      lastUpdated: Date.now(),
+    };
+  },
+
+  saveVoiceTelemetry(t: VoiceTelemetry) {
+    try {
+      localStorage.setItem('fox_voice_telemetry_v1', JSON.stringify(t));
+    } catch (e) {}
+  },
+
+  recordVoiceTTS(charCount: number, durationSeconds: number = 0): VoiceTelemetry {
+    const current = this.loadVoiceTelemetry();
+    const updated: VoiceTelemetry = {
+      ...current,
+      ttsCharactersSynthesized: current.ttsCharactersSynthesized + charCount,
+      ttsAudioSecondsGenerated: Math.round((current.ttsAudioSecondsGenerated + durationSeconds) * 10) / 10,
+      ttsSynthesisCount: current.ttsSynthesisCount + 1,
+      lastUpdated: Date.now(),
+    };
+    this.saveVoiceTelemetry(updated);
+    return updated;
+  },
+
+  recordVoiceSTT(wordCount: number, charCount: number): VoiceTelemetry {
+    const current = this.loadVoiceTelemetry();
+    const updated: VoiceTelemetry = {
+      ...current,
+      sttSpokenWords: current.sttSpokenWords + wordCount,
+      sttSpokenCharacters: current.sttSpokenCharacters + charCount,
+      sttSessionCount: current.sttSessionCount + 1,
+      lastUpdated: Date.now(),
+    };
+    this.saveVoiceTelemetry(updated);
+    return updated;
+  },
+
+  resetAllTelemetry(): { engine: EngineTelemetry; voice: VoiceTelemetry } {
+    const emptyEngine: EngineTelemetry = {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      requestCount: 0,
+      toolInvocationsCount: 0,
+      totalLatencyMs: 0,
+      lastUpdated: Date.now(),
+    };
+    const emptyVoice: VoiceTelemetry = {
+      ttsCharactersSynthesized: 0,
+      ttsAudioSecondsGenerated: 0,
+      ttsSynthesisCount: 0,
+      sttSpokenWords: 0,
+      sttSpokenCharacters: 0,
+      sttSessionCount: 0,
+      lastUpdated: Date.now(),
+    };
+    this.saveEngineTelemetry(emptyEngine);
+    this.saveVoiceTelemetry(emptyVoice);
+    return { engine: emptyEngine, voice: emptyVoice };
   },
 };
