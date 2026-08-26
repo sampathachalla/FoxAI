@@ -462,7 +462,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const fallbackWebSpeech = useCallback(
-    (text: string) => {
+    (text: string, onProgress?: (revealedText: string) => void) => {
       // Keep status as 'thinking' until speech actually begins
       setStatus('thinking');
       setAudioLevel(0);
@@ -482,7 +482,11 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         onSubtitle: (subtitle) => {
           setSpeakingTranscript(subtitle);
         },
+        onProgress: (revealed) => {
+          onProgress?.(revealed);
+        },
         onEnd: () => {
+          onProgress?.(text);
           speechSimulatorRef.current.stop();
           setAudioLevel(0);
           setFrequencyData(null);
@@ -495,6 +499,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           }, 350);
         },
         onError: () => {
+          onProgress?.(text);
           speechSimulatorRef.current.stop();
           setAudioLevel(0);
           setFrequencyData(null);
@@ -504,6 +509,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       });
 
       if (!spoke) {
+        onProgress?.(text);
         speechSimulatorRef.current.stop();
         setAudioLevel(0);
         setFrequencyData(null);
@@ -515,8 +521,9 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   );
 
   const speakText = useCallback(
-    async (text: string) => {
+    async (text: string, onProgress?: (revealedText: string) => void) => {
       if (!voicePrefs.autoSpeak) {
+        onProgress?.(text);
         setStatus('idle');
         setSpeakingTranscript('');
         return;
@@ -557,7 +564,11 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             onSubtitle: (sub) => {
               setSpeakingTranscript(sub);
             },
+            onProgress: (revealed) => {
+              onProgress?.(revealed);
+            },
             onEnd: () => {
+              onProgress?.(text);
               setAudioLevel(0);
               setFrequencyData(null);
               setSpeakingTranscript('');
@@ -570,23 +581,23 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             },
             onError: (err) => {
               console.warn('[Deepgram TTS] Playback error, falling back to Web Speech:', err);
-              fallbackWebSpeech(text);
+              fallbackWebSpeech(text, onProgress);
             },
           });
 
           if (!played) {
-            fallbackWebSpeech(text);
+            fallbackWebSpeech(text, onProgress);
           }
           return;
         } catch (err) {
           console.warn('[Deepgram TTS] Synthesis error, falling back to Web Speech:', err);
           setIsSynthesizingTTS(false);
-          fallbackWebSpeech(text);
+          fallbackWebSpeech(text, onProgress);
           return;
         }
       }
 
-      fallbackWebSpeech(text);
+      fallbackWebSpeech(text, onProgress);
     },
     [voicePrefs, hasDeepgramKey, cancelSpeaking, fallbackWebSpeech]
   );
@@ -605,7 +616,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
       }
     },
-    [addReminder, addNote]
+    [addReminder, addNote, updateDeviceSetting]
   );
 
   const sendMessage = useCallback(
@@ -662,35 +673,78 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           enginePrefs.provider
         );
         if (response.success && response.data) {
-          const assistantMsg: ChatMessage = {
-            id: 'ast_' + Date.now(),
-            role: 'assistant',
-            content: response.data.text,
-            timestamp: Date.now(),
-            tools: response.data.toolsDetected,
-            sources: response.data.sources,
-          };
+          const msgId = 'ast_' + Date.now();
+          const fullText = response.data.text;
+          const toolsDetected = response.data.toolsDetected;
+          const sources = response.data.sources;
 
-          const finalMessages = [...updatedWithUser, assistantMsg];
-          setMessages(finalMessages);
-
-          setSessions((prev) =>
-            prev.map((s) =>
-              s.id === activeSessionId
-                ? {
-                    ...s,
-                    updatedAt: Date.now(),
-                    messages: [...(s.messages || []), assistantMsg],
-                  }
-                : s
-            )
-          );
-
-          if (response.data.toolsDetected && response.data.toolsDetected.length > 0) {
-            handleToolExecutions(response.data.toolsDetected);
+          if (toolsDetected && toolsDetected.length > 0) {
+            handleToolExecutions(toolsDetected);
           }
 
-          speakText(response.data.text);
+          if (!voicePrefs.autoSpeak) {
+            // Voice output disabled: reveal entire text immediately
+            const assistantMsg: ChatMessage = {
+              id: msgId,
+              role: 'assistant',
+              content: fullText,
+              timestamp: Date.now(),
+              tools: toolsDetected,
+              sources: sources,
+            };
+            setMessages([...updatedWithUser, assistantMsg]);
+            setSessions((prev) =>
+              prev.map((s) =>
+                s.id === activeSessionId
+                  ? { ...s, updatedAt: Date.now(), messages: [...(s.messages || []), assistantMsg] }
+                  : s
+              )
+            );
+            setStatus('idle');
+            return;
+          }
+
+          // Voice output enabled: Stream text synchronously with Deepgram audio speech playback!
+          const initialStreamingMsg: ChatMessage = {
+            id: msgId,
+            role: 'assistant',
+            content: '',
+            timestamp: Date.now(),
+            tools: toolsDetected,
+            sources: sources,
+            isStreaming: true,
+          };
+
+          setMessages([...updatedWithUser, initialStreamingMsg]);
+
+          const updateMessageText = (revealed: string, isDone = false) => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === msgId ? { ...m, content: revealed, isStreaming: !isDone } : m
+              )
+            );
+            setSessions((prev) =>
+              prev.map((s) => {
+                if (s.id === activeSessionId) {
+                  return {
+                    ...s,
+                    previewText: revealed,
+                    updatedAt: Date.now(),
+                    messages: (s.messages || []).map((m) =>
+                      m.id === msgId ? { ...m, content: revealed, isStreaming: !isDone } : m
+                    ),
+                  };
+                }
+                return s;
+              })
+            );
+          };
+
+          speakText(fullText, (revealed) => {
+            updateMessageText(revealed, false);
+          }).then(() => {
+            updateMessageText(fullText, true);
+          });
         } else {
           throw new Error(response.error || 'Failed to get response');
         }

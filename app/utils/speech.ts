@@ -155,6 +155,7 @@ export class DeepgramAudioService {
       onEnd?: () => void;
       onError?: (err: any) => void;
       onSubtitle?: (subtitle: string, wordIndex: number, totalWords: number) => void;
+      onProgress?: (revealedText: string, wordIndex: number, totalWords: number) => void;
     } = {}
   ): Promise<boolean> {
     this.stop();
@@ -213,7 +214,9 @@ export class DeepgramAudioService {
         if (this.sessionId !== currentSession) return;
         currentWordIndex = idx;
         const sub = getSubtitleForWordIndex(idx);
+        const revealed = words.slice(0, idx + 1).join(' ');
         options.onSubtitle?.(sub, idx, words.length);
+        options.onProgress?.(revealed, idx, words.length);
       };
 
       audio.onplay = async () => {
@@ -367,6 +370,7 @@ export class SpeechSynthesisService {
       onError?: (err: any) => void;
       onBoundary?: (event: SpeechSynthesisEvent) => void;
       onSubtitle?: (subtitle: string, wordIndex: number, totalWords: number) => void;
+      onProgress?: (revealedText: string, wordIndex: number, totalWords: number) => void;
     } = {}
   ): boolean {
     if (!this.synth) return false;
@@ -452,7 +456,9 @@ export class SpeechSynthesisService {
       if (this.speakSessionId !== sessionId) return;
       currentWordIndex = index;
       const sub = getSubtitleForWordIndex(index);
+      const revealed = words.slice(0, index + 1).join(' ');
       options.onSubtitle?.(sub, index, words.length);
+      options.onProgress?.(revealed, index, words.length);
     };
 
     const cleanup = () => {
