@@ -210,6 +210,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const deepgramAudioRef = useRef<DeepgramAudioService>(new DeepgramAudioService());
   const isSpeechFinalDispatchedRef = useRef<boolean>(false);
   const isSendingMessageRef = useRef<boolean>(false);
+  const startListeningRef = useRef<() => void>(() => {});
+  const autoListenTimerRef = useRef<any>(null);
 
   // Persistence effects
   useEffect(() => {
@@ -346,10 +348,12 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const cancelSpeaking = useCallback(() => {
+    clearTimeout(autoListenTimerRef.current);
     speechSynthRef.current.stop();
     deepgramAudioRef.current.stop();
     speechSimulatorRef.current.stop();
     setAudioLevel(0);
+    setFrequencyData(null);
     setSpeakingTranscript('');
     setIsSynthesizingTTS(false);
     setStatus('idle');
@@ -484,6 +488,11 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           setFrequencyData(null);
           setSpeakingTranscript('');
           setStatus('idle');
+
+          clearTimeout(autoListenTimerRef.current);
+          autoListenTimerRef.current = setTimeout(() => {
+            startListeningRef.current?.();
+          }, 350);
         },
         onError: () => {
           speechSimulatorRef.current.stop();
@@ -553,6 +562,11 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               setFrequencyData(null);
               setSpeakingTranscript('');
               setStatus('idle');
+
+              clearTimeout(autoListenTimerRef.current);
+              autoListenTimerRef.current = setTimeout(() => {
+                startListeningRef.current?.();
+              }, 350);
             },
             onError: (err) => {
               console.warn('[Deepgram TTS] Playback error, falling back to Web Speech:', err);
@@ -746,7 +760,12 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   }, [cancelSpeaking, sendMessage]);
 
+  useEffect(() => {
+    startListeningRef.current = startListening;
+  }, [startListening]);
+
   const stopListening = useCallback(() => {
+    clearTimeout(autoListenTimerRef.current);
     speechRecRef.current.stop();
     audioAnalyserRef.current.stopMicrophone();
     speechSimulatorRef.current.stop();
