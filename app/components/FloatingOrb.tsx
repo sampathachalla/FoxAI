@@ -153,6 +153,9 @@ export const FloatingOrb: React.FC = () => {
       const curStatus = statusRef.current;
       const curAudio = audioLevelRef.current || 0;
       const curActive = isVoiceActiveRef.current;
+      const isSpeaking = curStatus === 'speaking';
+      const isListening = curStatus === 'listening';
+      const isThinking = curStatus === 'thinking';
       const curFreq = frequencyDataRef.current;
       const currentTheme = accentThemeRef.current;
 
@@ -161,24 +164,28 @@ export const FloatingOrb: React.FC = () => {
       const rgbSecondary = hexToRgb(currentTheme?.secondary || '#00E5FF');
 
       // Morph progress: Smoothly activates J.A.R.V.I.S. orbital HUD when thinking
-      const targetMorph = curStatus === 'thinking' ? 1.0 : 0.0;
+      const targetMorph = isThinking ? 1.0 : 0.0;
       morphProgress += (targetMorph - morphProgress) * 0.065;
 
       // Smooth time progression
-      time += 0.01;
+      time += 0.012;
 
-      // Acoustic wave phase speed
-      const waveSpeed = curActive ? 0.014 + curAudio * 0.018 : 0.007;
+      // Dynamic Acoustic wave phase speed (fast traveling waves when speaking)
+      const waveSpeed = isSpeaking
+        ? 0.038 + curAudio * 0.075
+        : isListening
+        ? 0.018 + curAudio * 0.035
+        : 0.008;
       wavePhase += waveSpeed;
 
       // Update Holo Pulses
       holoPulses.forEach((pulse) => {
-        pulse.angle = (pulse.angle + pulse.speed * (curStatus === 'thinking' ? 1.8 : 1.0)) % (Math.PI * 2);
+        pulse.angle = (pulse.angle + pulse.speed * (isThinking ? 1.8 : 1.0)) % (Math.PI * 2);
       });
 
-      // Continuous Slow 3D Rotation
+      // Continuous Slow 3D Rotation with subtle pitch undulation
       if (!isDragging) {
-        currentYaw += 0.0034;
+        currentYaw += isSpeaking ? 0.0045 : 0.0034;
         currentPitch = 0.12 + Math.sin(time * 0.25) * 0.02;
       }
 
@@ -213,11 +220,11 @@ export const FloatingOrb: React.FC = () => {
           8,
           centerX,
           centerY,
-          300 + (curActive ? curAudio * 50 : 0) + (morphProgress * 35)
+          300 + (curActive ? curAudio * 65 : 0) + (morphProgress * 35)
         );
 
-        const glowAlpha1 = curActive ? 0.38 : 0.25 + morphProgress * 0.12;
-        const glowAlpha2 = curActive ? 0.18 : 0.09 + morphProgress * 0.08;
+        const glowAlpha1 = isSpeaking ? 0.45 + curAudio * 0.25 : curActive ? 0.38 : 0.25 + morphProgress * 0.12;
+        const glowAlpha2 = isSpeaking ? 0.22 + curAudio * 0.15 : curActive ? 0.18 : 0.09 + morphProgress * 0.08;
 
         ambientGlow.addColorStop(0, `rgba(${rgbPrimary.r}, ${rgbPrimary.g}, ${rgbPrimary.b}, ${glowAlpha1})`);
         ambientGlow.addColorStop(0.48, `rgba(${rgbSecondary.r}, ${rgbSecondary.g}, ${rgbSecondary.b}, ${glowAlpha2})`);
@@ -299,20 +306,40 @@ export const FloatingOrb: React.FC = () => {
       for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
 
-        // 1. Pristine Pure Mathematical Sphere Geometry with voice acoustics
+        // 1. Pristine Pure Mathematical Sphere Geometry with voice acoustics & 3D traveling waves
         let voiceSoundwave = 0;
         let acousticBrightness = 0;
 
         if (curActive) {
-          const freqIndex = Math.floor((p.row / NUM_ROWS) * (curFreq?.length || 32)) % (curFreq?.length || 32);
+          const freqIndex = Math.floor(((p.phi + Math.PI / 2) / Math.PI) * (curFreq?.length || 32)) % (curFreq?.length || 32);
           const rawFreq = curFreq && curFreq.length > 0 ? curFreq[freqIndex] : 0;
           const bandEnergy = (rawFreq / 255) * (curAudio || 0.4);
 
-          const wordWave1 = Math.sin(p.phi * 4 - wavePhase * 1.2) * (curAudio * 4.5);
-          const wordWave2 = Math.cos(p.theta * 3 - wavePhase * 0.9) * (bandEnergy * 3.5);
+          if (isSpeaking) {
+            // A. Continuous 3D Traveling Wave around sphere circumference (Longitude)
+            const waveCircumference = Math.sin(p.theta * 4.0 + wavePhase * 2.8) * (curAudio * 9.5);
 
-          voiceSoundwave = wordWave1 + wordWave2;
-          acousticBrightness = bandEnergy + curAudio * 0.65;
+            // B. Cascading Vertical Wave from Pole to Equator (Latitude)
+            const waveVertical = Math.cos(p.phi * 5.0 - wavePhase * 3.2) * (curAudio * 8.5);
+
+            // C. Diagonal Spherical Harmonic Vortex Ripple
+            const waveDiagonal = Math.sin((p.theta * 3.0 + p.phi * 3.0) + wavePhase * 2.2) * (bandEnergy * 7.5);
+
+            // D. Real-time Vocal Harmonic Vibration & Micro-Jitter (Physical vocal cord resonance)
+            const vocalVibration =
+              Math.sin(time * 42.0 + p.phi * 10.0) * (curAudio * 3.8) +
+              Math.cos(time * 58.0 + p.theta * 14.0) * (curAudio * 2.6);
+            const vocalJitter = (Math.sin(p.seed * 77 + time * 32) * 0.5) * (curAudio * 2.2);
+
+            voiceSoundwave = waveCircumference + waveVertical + waveDiagonal + vocalVibration + vocalJitter;
+            acousticBrightness = Math.min(1.0, bandEnergy * 1.2 + curAudio * 0.85 + Math.abs(voiceSoundwave) / 24);
+          } else {
+            // Listening mode (gentle acoustic ripples reacting to user mic)
+            const wordWave1 = Math.sin(p.phi * 4 - wavePhase * 1.2) * (curAudio * 5.5);
+            const wordWave2 = Math.cos(p.theta * 3 - wavePhase * 0.9) * (bandEnergy * 4.5);
+            voiceSoundwave = wordWave1 + wordWave2;
+            acousticBrightness = bandEnergy + curAudio * 0.65;
+          }
         }
 
         const rSph = baseSphereRadius + voiceSoundwave;
@@ -440,7 +467,15 @@ export const FloatingOrb: React.FC = () => {
           }
         } else {
           // Central Sphere Core Coloring (#99FFFF)
-          if (normalizedElevation > 0.65 || (curActive && curAudio > 0.35)) {
+          if (isSpeaking) {
+            // High energy luminescent wave peak coloring when talking
+            const peakGlow = acousticBrightness;
+            rColor = Math.min(255, Math.floor(rgbPrimary.r + (255 - rgbPrimary.r) * peakGlow * 0.85));
+            gColor = Math.min(255, Math.floor(rgbPrimary.g + (255 - rgbPrimary.g) * peakGlow * 0.85));
+            bColor = Math.min(255, Math.floor(rgbPrimary.b + (255 - rgbPrimary.b) * peakGlow * 0.85));
+            pSize = (1.5 + peakGlow * 1.2) * scale;
+            alpha = Math.min(1.0, 0.65 + peakGlow * 0.35);
+          } else if (normalizedElevation > 0.65 || (curActive && curAudio > 0.35)) {
             const peakGlow = curActive ? acousticBrightness : 0.25;
             rColor = Math.min(255, Math.floor(rgbPrimary.r + (255 - rgbPrimary.r) * peakGlow));
             gColor = Math.min(255, Math.floor(rgbPrimary.g + (255 - rgbPrimary.g) * peakGlow));
@@ -450,7 +485,7 @@ export const FloatingOrb: React.FC = () => {
           } else if (normalizedElevation > 0.3) {
             const elevBlend = (normalizedElevation - 0.3) / 0.35;
             rColor = Math.floor(rgbSecondary.r * (1 - elevBlend) + rgbPrimary.r * elevBlend);
-            gColor = Math.floor(rgbSecondary.g * (1 - elevBlend) + rgbPrimary.g * elevBlend);
+            gColor = Math.floor(rgbSecondary.g * (1 - elevBlend) + rgbPrimary.r * elevBlend);
             bColor = Math.floor(rgbSecondary.b * (1 - elevBlend) + rgbPrimary.b * elevBlend);
             pSize = 1.45 * scale;
           } else {
