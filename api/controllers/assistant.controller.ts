@@ -187,20 +187,12 @@ export async function handleAssistantTools(req: Request, res: Response): Promise
 
 export async function handleHermesAgent(req: Request, res: Response): Promise<void> {
   try {
-    const { prompt, history, model, provider, systemPrompt, temperature } = req.body;
+    const { prompt, history, model, provider, temperature } = req.body;
 
     if (!prompt || typeof prompt !== 'string') {
       res.status(400).json({ error: 'Prompt is required and must be a string.' });
       return;
     }
-
-    const { getHermesAgent } = await import('../agent');
-    const agent = getHermesAgent({
-      model,
-      provider,
-      systemPrompt,
-      temperature,
-    });
 
     const agentHistory = Array.isArray(history)
       ? history.map((h: any) => ({
@@ -209,6 +201,28 @@ export async function handleHermesAgent(req: Request, res: Response): Promise<vo
         }))
       : [];
 
+    // 1. Try Python FastAPI microservice first
+    try {
+      const { callHermesPythonService } = await import('../services/hermes.client');
+      const pyResult = await callHermesPythonService(prompt, agentHistory, model, temperature);
+      if (pyResult && pyResult.success && pyResult.data) {
+        res.json({
+          success: true,
+          data: {
+            ...pyResult.data,
+            engine: 'Hermes Python FastAPI Microservice',
+            timestamp: Date.now(),
+          },
+        });
+        return;
+      }
+    } catch (pyErr) {
+      console.warn('[Hermes Controller] Python service unavailable, using TypeScript fallback:', pyErr);
+    }
+
+    // 2. Fallback to native TypeScript engine
+    const { getHermesAgent } = await import('../agent');
+    const agent = getHermesAgent({ model, provider, temperature });
     const result = await agent.run(prompt, agentHistory);
 
     res.json({
@@ -219,6 +233,7 @@ export async function handleHermesAgent(req: Request, res: Response): Promise<vo
         steps: result.steps,
         toolsExecuted: result.toolsExecuted,
         durationMs: result.durationMs,
+        engine: 'Hermes Native Engine',
         timestamp: Date.now(),
       },
     });
