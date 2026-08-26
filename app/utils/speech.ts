@@ -178,7 +178,7 @@ export class DeepgramAudioService {
         .trim();
       const words = cleanText.split(/\s+/).filter(Boolean);
 
-      // Subtitle chunking
+      // Build natural phrase chunks (3-5 words per subtitle on screen)
       const chunks: { text: string; startIndex: number; endIndex: number }[] = [];
       let currentChunkWords: string[] = [];
       let currentStartIndex = 0;
@@ -186,8 +186,8 @@ export class DeepgramAudioService {
       for (let i = 0; i < words.length; i++) {
         const w = words[i];
         currentChunkWords.push(w);
-        const hasPunctuationBreak = /[.,;!?—]$/.test(w);
-        const isChunkLongEnough = currentChunkWords.length >= 6;
+        const hasPunctuationBreak = /[.,;!?—:]$/.test(w);
+        const isChunkLongEnough = currentChunkWords.length >= 4;
         const isLastWord = i === words.length - 1;
 
         if (hasPunctuationBreak || isChunkLongEnough || isLastWord) {
@@ -205,7 +205,7 @@ export class DeepgramAudioService {
         const activeChunk =
           chunks.find((c) => idx >= c.startIndex && idx <= c.endIndex) ||
           chunks[chunks.length - 1];
-        return activeChunk ? activeChunk.text : words.slice(Math.max(0, idx - 3), idx + 4).join(' ');
+        return activeChunk ? activeChunk.text : words.slice(Math.max(0, idx - 2), idx + 3).join(' ');
       };
 
       let currentWordIndex = 0;
@@ -218,6 +218,20 @@ export class DeepgramAudioService {
         options.onSubtitle?.(sub, idx, words.length);
         options.onProgress?.(revealed, idx, words.length);
       };
+
+      const syncSubtitlesWithAudioTime = () => {
+        if (this.sessionId !== currentSession || !audio) return;
+        const dur = audio.duration;
+        if (dur && !isNaN(dur) && dur > 0) {
+          const progress = Math.max(0, Math.min(1, audio.currentTime / dur));
+          const targetIdx = Math.min(words.length - 1, Math.floor(progress * words.length));
+          if (targetIdx !== currentWordIndex) {
+            broadcastSubtitle(targetIdx);
+          }
+        }
+      };
+
+      audio.ontimeupdate = syncSubtitlesWithAudioTime;
 
       audio.onplay = async () => {
         if (this.sessionId !== currentSession) return;
@@ -248,6 +262,8 @@ export class DeepgramAudioService {
         // Live real-time analysis loop
         const analyzeLoop = () => {
           if (this.sessionId !== currentSession || !this.currentAudio || this.currentAudio.paused) return;
+          syncSubtitlesWithAudioTime();
+
           if (connectedAnalyser && this.analyser && this.dataArray) {
             this.analyser.getByteFrequencyData(this.dataArray);
             let sum = 0;
@@ -268,28 +284,11 @@ export class DeepgramAudioService {
 
         options.onStart?.();
         broadcastSubtitle(0);
-
-        // Word ticker synchronized to audio playback
-        const estimatedSeconds = audio.duration || Math.max(1, words.length * 0.28);
-        const msPerWord = Math.max(
-          110,
-          Math.min(380, Math.round((estimatedSeconds * 1000) / Math.max(1, words.length)))
-        );
-
-        this.wordTicker = setInterval(() => {
-          if (this.sessionId !== currentSession) {
-            clearInterval(this.wordTicker);
-            return;
-          }
-          if (currentWordIndex < words.length - 1) {
-            currentWordIndex++;
-            broadcastSubtitle(currentWordIndex);
-          }
-        }, msPerWord);
       };
 
       audio.onended = () => {
         if (this.sessionId !== currentSession) return;
+        broadcastSubtitle(words.length - 1);
         this.stop();
         options.onEnd?.();
       };
