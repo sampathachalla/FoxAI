@@ -334,37 +334,35 @@ export const FloatingOrb: React.FC = () => {
       for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
 
-        // 1. Pristine Pure Mathematical Sphere Geometry with Cinematic Silky Slow Soundwaves
+        // 1. Pristine Pure Mathematical Sphere Geometry with Guaranteed Rich 3D Acoustic Waves
         let voiceSoundwave = 0;
         let acousticBrightness = 0;
 
-        const speechEnergy = smoothedSpeechEnergy;
+        // Guaranteed active vocal cadence envelope during speech (never stays flat or static)
+        const vocalCadence = isSpeaking
+          ? 0.55 + Math.sin(time * 3.0) * 0.22 + Math.cos(time * 5.2 + p.phi * 2.0) * 0.14 + (smoothedAudioLevel * 0.35)
+          : isListening
+          ? 0.35 + (smoothedAudioLevel * 0.6)
+          : 0.06;
 
-        const freqIndex = Math.floor(((p.phi + Math.PI / 2) / Math.PI) * (curFreq?.length || 32)) % (curFreq?.length || 32);
-        const rawFreq = curFreq && curFreq.length > 0 ? curFreq[freqIndex] : 0;
-        const bandGain = rawFreq / 255;
+        if (isSpeaking || isListening) {
+          // A. Visible Traveling Soundwaves rotating around longitude
+          const waveCircumference = Math.sin(p.theta * 3.0 - wavePhase * 1.8) * (vocalCadence * 24.0);
 
-        // Dynamic audio amplitude (when quiet or between words, waves naturally subside; when talking/loud, waves swell)
-        const activeSoundLevel = Math.max(smoothedAudioLevel * 1.3, curActive ? 0.18 : 0.03);
+          // B. Vertical Soundwave Ripples cascading through latitude lines
+          const waveVertical = Math.cos(p.phi * 4.0 + wavePhase * 2.2) * (vocalCadence * 20.0);
 
-        if (speechEnergy > 0.15) {
-          // A. Cinematic Slow Circumferential Waves (rotates smoothly and elegantly around sphere)
-          const waveCircumference = Math.sin(p.theta * 2.5 - wavePhase * 1.3) * (activeSoundLevel * 16.0 + 2.5);
+          // C. Equatorial Vocal Bulge (organic syllable breathing)
+          const voiceBulge = Math.cos(p.phi) * Math.sin(time * 2.6 + p.theta) * (vocalCadence * 16.0);
 
-          // B. Gentle Vertical Latitude Undulation (reacts smoothly to voice pitch and harmonics)
-          const waveVertical = Math.cos(p.phi * 3.5 + wavePhase * 1.5) * (activeSoundLevel * 13.0 + bandGain * 6.0);
-
-          // C. Vocal Breathing Core (slow, graceful expansion on spoken words)
-          const voiceBulge = Math.cos(p.phi) * Math.sin(time * 2.0 + p.theta * 0.5) * (activeSoundLevel * 11.0);
-
-          // D. Smooth Harmonic Shimmer (warm, organic, fluid)
-          const harmonicFlow = Math.sin(time * 3.0 + p.phi * 2.0 + p.theta * 1.5) * (activeSoundLevel * 4.5);
+          // D. Harmonic Resonance Flow (warm, organic, liquid)
+          const harmonicFlow = Math.sin(time * 4.0 + p.phi * 2.0 + p.theta * 2.0) * (vocalCadence * 7.5);
 
           voiceSoundwave = waveCircumference + waveVertical + voiceBulge + harmonicFlow;
-          acousticBrightness = Math.min(1.0, 0.30 + activeSoundLevel * 0.50 + bandGain * 0.18);
+          acousticBrightness = Math.min(1.0, 0.40 + vocalCadence * 0.55);
         } else {
-          // Serene, continuous fluid breathing so sphere is never stagnant or stuck
-          const breath = Math.sin(time * 1.4 + p.phi * 1.5 + p.theta) * 3.2;
+          // Serene, continuous fluid breathing so sphere is always seamlessly alive and moving
+          const breath = Math.sin(time * 1.6 + p.phi * 1.5 + p.theta) * 3.6;
           voiceSoundwave = breath;
           acousticBrightness = 0.15;
         }
