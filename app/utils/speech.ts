@@ -11,7 +11,8 @@ export class SpeechRecognitionService {
   private recognition: any = null;
   private isListening = false;
   private silenceTimer: any = null;
-  private lastTranscript = '';
+  private accumulatedFinalText = '';
+  private currentInterimText = '';
   private hasEmittedFinal = false;
 
   constructor() {
@@ -42,7 +43,8 @@ export class SpeechRecognitionService {
 
     this.isListening = true;
     this.hasEmittedFinal = false;
-    this.lastTranscript = '';
+    this.accumulatedFinalText = '';
+    this.currentInterimText = '';
 
     this.recognition.onstart = () => {
       callbacks.onStart?.();
@@ -51,40 +53,41 @@ export class SpeechRecognitionService {
     this.recognition.onresult = (event: any) => {
       if (this.hasEmittedFinal) return;
 
-      let interimTranscript = '';
-      let finalTranscript = '';
+      let newFinals = '';
+      let interim = '';
 
       for (let i = event.resultIndex; i < event.results.length; ++i) {
+        const transcriptPart = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          finalTranscript += event.results[i][0].transcript;
+          newFinals += ' ' + transcriptPart;
         } else {
-          interimTranscript += event.results[i][0].transcript;
+          interim += ' ' + transcriptPart;
         }
       }
 
-      const text = (finalTranscript || interimTranscript).trim();
-      if (text) {
-        this.lastTranscript = text;
+      if (newFinals.trim()) {
+        this.accumulatedFinalText = (this.accumulatedFinalText + ' ' + newFinals).trim();
+      }
+      this.currentInterimText = interim.trim();
 
-        if (finalTranscript) {
-          this.hasEmittedFinal = true;
-          clearTimeout(this.silenceTimer);
-          callbacks.onResult?.(text, true);
-          this.stop();
-          return;
-        }
+      const fullCombined = (this.accumulatedFinalText + ' ' + this.currentInterimText).trim();
 
-        callbacks.onResult?.(text, false);
+      if (fullCombined) {
+        // Stream interim preview to UI without cutting off
+        callbacks.onResult?.(fullCombined, false);
 
-        // Auto-finalize after 1.8 seconds of silence only if not already emitted
+        // Reset silence timer on every detected syllable/word
         clearTimeout(this.silenceTimer);
         this.silenceTimer = setTimeout(() => {
-          if (this.isListening && this.lastTranscript && !this.hasEmittedFinal) {
-            this.hasEmittedFinal = true;
-            callbacks.onResult?.(this.lastTranscript, true);
-            this.stop();
+          if (this.isListening && !this.hasEmittedFinal) {
+            const finalClean = (this.accumulatedFinalText + ' ' + this.currentInterimText).trim();
+            if (finalClean.length > 0) {
+              this.hasEmittedFinal = true;
+              callbacks.onResult?.(finalClean, true);
+              this.stop();
+            }
           }
-        }, 1800);
+        }, 2200); // 2.2s of natural pause before concluding sentence
       }
     };
 
@@ -96,6 +99,13 @@ export class SpeechRecognitionService {
 
     this.recognition.onend = () => {
       clearTimeout(this.silenceTimer);
+      if (this.isListening && !this.hasEmittedFinal) {
+        const finalClean = (this.accumulatedFinalText + ' ' + this.currentInterimText).trim();
+        if (finalClean.length > 0) {
+          this.hasEmittedFinal = true;
+          callbacks.onResult?.(finalClean, true);
+        }
+      }
       this.isListening = false;
       callbacks.onEnd?.();
     };

@@ -187,13 +187,13 @@ export const FloatingOrb: React.FC = () => {
         : 0.10;
       smoothedSpeechEnergy += (targetSpeechEnergy - smoothedSpeechEnergy) * 0.085;
 
-      // Dynamic Acoustic wave phase speed (smoothly accelerated/decelerated)
+      // Dynamic Acoustic wave phase speed (smooth, rhythmic, perfectly matched to audio cadence)
       const targetWaveSpeed = isSpeaking
-        ? 0.038 + smoothedAudioLevel * 0.070
+        ? 0.012 + smoothedAudioLevel * 0.024
         : isListening
-        ? 0.018 + smoothedAudioLevel * 0.030
-        : 0.008;
-      smoothedWaveSpeed += (targetWaveSpeed - smoothedWaveSpeed) * 0.075;
+        ? 0.009 + smoothedAudioLevel * 0.016
+        : 0.006;
+      smoothedWaveSpeed += (targetWaveSpeed - smoothedWaveSpeed) * 0.06;
       wavePhase += smoothedWaveSpeed;
 
       // Update Holo Pulses
@@ -327,7 +327,7 @@ export const FloatingOrb: React.FC = () => {
       for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
 
-        // 1. Pristine Pure Mathematical Sphere Geometry with smoothly interpolated 3D traveling voice waves
+        // 1. Pristine Pure Mathematical Sphere Geometry with 1:1 audio-synchronized soundwaves
         let voiceSoundwave = 0;
         let acousticBrightness = 0;
 
@@ -335,33 +335,34 @@ export const FloatingOrb: React.FC = () => {
 
         const freqIndex = Math.floor(((p.phi + Math.PI / 2) / Math.PI) * (curFreq?.length || 32)) % (curFreq?.length || 32);
         const rawFreq = curFreq && curFreq.length > 0 ? curFreq[freqIndex] : 0;
+        const bandGain = rawFreq / 255;
 
-        if (speechEnergy > 0.25) {
-          // A. Strong Circumferential Traveling Waves around longitude (circulating around sphere)
-          const waveCircumference = Math.sin(p.theta * 4.0 - wavePhase * 3.6) * (speechEnergy * 24.0);
+        // Dynamic audio amplitude (when quiet or between words, waves naturally subside; when talking/loud, waves swell)
+        const activeSoundLevel = Math.max(smoothedAudioLevel * 1.5, curActive ? 0.22 : 0.04);
 
-          // B. Vertical Soundwave Ripple cascading through latitude rings
-          const waveVertical = Math.cos(p.phi * 5.0 + wavePhase * 4.2) * (speechEnergy * 20.0);
+        if (speechEnergy > 0.18) {
+          // A. Audio-synchronized Circumferential Waves (rotates smoothly around sphere with spoken cadence)
+          const waveCircumference = Math.sin(p.theta * 3.0 - wavePhase * 1.8) * (activeSoundLevel * 20.0 + 3.0);
 
-          // C. Vocal Resonance Core Bulge & Breathing
-          const voiceBulge = Math.cos(p.phi) * Math.sin(time * 12.0 + p.theta * 2.0) * (speechEnergy * 16.0);
+          // B. Audio-reactive Vertical Latitude Undulation (reacts to voice pitch and FFT frequencies)
+          const waveVertical = Math.cos(p.phi * 4.0 + wavePhase * 2.0) * (activeSoundLevel * 16.0 + bandGain * 8.0);
 
-          // D. Physical Vocal Formant Micro-Vibration & High-Frequency Jitter
-          const vocalVibration =
-            Math.sin(time * 48.0 + p.phi * 14.0) * (speechEnergy * 7.5) +
-            Math.cos(time * 72.0 + p.theta * 18.0) * (speechEnergy * 5.5);
-          const vocalJitter = (Math.sin(p.seed * 89 + time * 36) * 0.6) * (speechEnergy * 4.0);
+          // C. Vocal Breathing Core Bulge (expands synchronously on vowels and spoken words)
+          const voiceBulge = Math.cos(p.phi) * Math.sin(time * 3.0 + p.theta) * (activeSoundLevel * 14.0);
 
-          // E. FFT Audio Frequency Resonance
-          const freqRipple = (rawFreq / 255) * (speechEnergy * 22.0) * Math.sin(p.theta * 3.0 + time * 8.0);
+          // D. Smooth harmonic vocal resonance (warm, organic, synchronized to audio)
+          const harmonicRipple = Math.sin(time * 5.0 + p.phi * 2.5 + p.theta * 2.0) * (activeSoundLevel * 6.0);
 
-          voiceSoundwave = waveCircumference + waveVertical + voiceBulge + vocalVibration + vocalJitter + freqRipple;
-          acousticBrightness = Math.min(1.0, 0.45 + speechEnergy * 0.45 + Math.abs(voiceSoundwave) / 36);
+          // E. FFT Frequency band lift
+          const freqLift = bandGain * (activeSoundLevel * 12.0 + 3.0) * Math.cos(p.phi);
+
+          voiceSoundwave = waveCircumference + waveVertical + voiceBulge + harmonicRipple + freqLift;
+          acousticBrightness = Math.min(1.0, 0.35 + activeSoundLevel * 0.55 + bandGain * 0.2);
         } else {
-          // Gentle continuous fluid breathing so sphere is always seamlessly alive
-          const breath = Math.sin(time * 2.2 + p.phi * 2.0 + p.theta * 2.0) * (3.5 + speechEnergy * 12.0);
+          // Gentle continuous fluid breathing when idle so sphere is always seamlessly alive
+          const breath = Math.sin(time * 2.0 + p.phi * 2.0 + p.theta * 2.0) * 3.0;
           voiceSoundwave = breath;
-          acousticBrightness = 0.15 + speechEnergy * 0.4;
+          acousticBrightness = 0.15;
         }
 
         const rSph = baseSphereRadius + voiceSoundwave;
