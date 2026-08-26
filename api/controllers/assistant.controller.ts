@@ -10,15 +10,60 @@ import { ChatMessage } from '../models/assistant.types';
 
 export async function handleAssistantChat(req: Request, res: Response): Promise<void> {
   try {
-    const { prompt, history, personaPrompt, model, provider } = req.body;
+    const { prompt, history, personaPrompt, model, provider, temperature } = req.body;
 
     if (!prompt || typeof prompt !== 'string') {
       res.status(400).json({ error: 'Prompt is required and must be a string.' });
       return;
     }
 
-    const chatHistory: ChatMessage[] = Array.isArray(history) ? history : [];
-    const result = await generateAssistantResponse(prompt, chatHistory, personaPrompt, model, provider);
+    const chatHistory = Array.isArray(history)
+      ? history.map((h: any) => ({
+          role: h.role === 'user' ? 'user' : 'assistant',
+          content: h.content,
+        }))
+      : [];
+
+    // 1. Try Hermes Python FastAPI Microservice first
+    try {
+      const { callHermesPythonService } = await import('../services/hermes.client');
+      const pyResult = await callHermesPythonService(prompt, chatHistory, model, temperature);
+      if (pyResult && pyResult.success && pyResult.data) {
+        // Map Python toolsExecuted into frontend toolsDetected format
+        const toolsDetected = (pyResult.data.toolsExecuted || []).map((t: any) => {
+          let toolName = t.name;
+          if (toolName === 'create_reminder') toolName = 'reminder';
+          else if (toolName === 'create_note') toolName = 'note';
+          else if (toolName === 'get_weather') toolName = 'weather';
+          else if (toolName === 'control_device') toolName = 'device_control';
+          else if (toolName === 'calculate') toolName = 'calculator';
+
+          return {
+            tool: toolName,
+            parameters: t.arguments || {},
+          };
+        });
+
+        res.json({
+          success: true,
+          data: {
+            text: pyResult.data.text,
+            thought: pyResult.data.thought || '',
+            steps: pyResult.data.steps || [],
+            toolsDetected,
+            sources: [],
+            isQuotaFallback: false,
+            timestamp: Date.now(),
+          },
+        });
+        return;
+      }
+    } catch (pyErr) {
+      console.warn('[Assistant Controller] Hermes Python microservice fallback:', pyErr);
+    }
+
+    // 2. Fallback to generateAssistantResponse (OpenAI / Gemini)
+    const result = await generateAssistantResponse(prompt, history, personaPrompt, model, provider);
 
     res.json({
       success: true,
