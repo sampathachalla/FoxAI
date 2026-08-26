@@ -4,6 +4,11 @@ dist/
 coverage/
 .DS_Store
 *.log
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
 .env
 .env*
 api/.env
