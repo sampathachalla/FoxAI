@@ -306,40 +306,51 @@ export const FloatingOrb: React.FC = () => {
       for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
 
-        // 1. Pristine Pure Mathematical Sphere Geometry with voice acoustics & 3D traveling waves
+        // 1. Pristine Pure Mathematical Sphere Geometry with prominent 3D traveling voice waves
         let voiceSoundwave = 0;
         let acousticBrightness = 0;
 
-        if (curActive) {
-          const freqIndex = Math.floor(((p.phi + Math.PI / 2) / Math.PI) * (curFreq?.length || 32)) % (curFreq?.length || 32);
-          const rawFreq = curFreq && curFreq.length > 0 ? curFreq[freqIndex] : 0;
-          const bandEnergy = (rawFreq / 255) * (curAudio || 0.4);
+        const speechEnergy = isSpeaking
+          ? Math.max(0.65, (curAudio || 0.4) * 2.4)
+          : isListening
+          ? Math.max(0.35, (curAudio || 0.2) * 1.8)
+          : 0.10;
 
-          if (isSpeaking) {
-            // A. Continuous 3D Traveling Wave around sphere circumference (Longitude)
-            const waveCircumference = Math.sin(p.theta * 4.0 + wavePhase * 2.8) * (curAudio * 9.5);
+        const freqIndex = Math.floor(((p.phi + Math.PI / 2) / Math.PI) * (curFreq?.length || 32)) % (curFreq?.length || 32);
+        const rawFreq = curFreq && curFreq.length > 0 ? curFreq[freqIndex] : 0;
+        const bandEnergy = (rawFreq / 255) * speechEnergy;
 
-            // B. Cascading Vertical Wave from Pole to Equator (Latitude)
-            const waveVertical = Math.cos(p.phi * 5.0 - wavePhase * 3.2) * (curAudio * 8.5);
+        if (isSpeaking) {
+          // A. Strong Circumferential Traveling Waves around longitude (circulating around sphere)
+          const waveCircumference = Math.sin(p.theta * 4.0 - wavePhase * 3.6) * (speechEnergy * 24.0);
 
-            // C. Diagonal Spherical Harmonic Vortex Ripple
-            const waveDiagonal = Math.sin((p.theta * 3.0 + p.phi * 3.0) + wavePhase * 2.2) * (bandEnergy * 7.5);
+          // B. Vertical Soundwave Ripple cascading through latitude rings
+          const waveVertical = Math.cos(p.phi * 5.0 + wavePhase * 4.2) * (speechEnergy * 20.0);
 
-            // D. Real-time Vocal Harmonic Vibration & Micro-Jitter (Physical vocal cord resonance)
-            const vocalVibration =
-              Math.sin(time * 42.0 + p.phi * 10.0) * (curAudio * 3.8) +
-              Math.cos(time * 58.0 + p.theta * 14.0) * (curAudio * 2.6);
-            const vocalJitter = (Math.sin(p.seed * 77 + time * 32) * 0.5) * (curAudio * 2.2);
+          // C. Vocal Resonance Core Bulge & Breathing
+          const voiceBulge = Math.cos(p.phi) * Math.sin(time * 12.0 + p.theta * 2.0) * (speechEnergy * 16.0);
 
-            voiceSoundwave = waveCircumference + waveVertical + waveDiagonal + vocalVibration + vocalJitter;
-            acousticBrightness = Math.min(1.0, bandEnergy * 1.2 + curAudio * 0.85 + Math.abs(voiceSoundwave) / 24);
-          } else {
-            // Listening mode (gentle acoustic ripples reacting to user mic)
-            const wordWave1 = Math.sin(p.phi * 4 - wavePhase * 1.2) * (curAudio * 5.5);
-            const wordWave2 = Math.cos(p.theta * 3 - wavePhase * 0.9) * (bandEnergy * 4.5);
-            voiceSoundwave = wordWave1 + wordWave2;
-            acousticBrightness = bandEnergy + curAudio * 0.65;
-          }
+          // D. Physical Vocal Formant Micro-Vibration & High-Frequency Jitter
+          const vocalVibration =
+            Math.sin(time * 48.0 + p.phi * 14.0) * (speechEnergy * 7.5) +
+            Math.cos(time * 72.0 + p.theta * 18.0) * (speechEnergy * 5.5);
+          const vocalJitter = (Math.sin(p.seed * 89 + time * 36) * 0.6) * (speechEnergy * 4.0);
+
+          // E. FFT Audio Frequency Resonance
+          const freqRipple = (rawFreq / 255) * (speechEnergy * 22.0) * Math.sin(p.theta * 3.0 + time * 8.0);
+
+          voiceSoundwave = waveCircumference + waveVertical + voiceBulge + vocalVibration + vocalJitter + freqRipple;
+          acousticBrightness = Math.min(1.0, 0.45 + speechEnergy * 0.45 + Math.abs(voiceSoundwave) / 36);
+        } else if (isListening) {
+          // Listening mode (responsive acoustic ripples reacting to user speech)
+          const wordWave1 = Math.sin(p.phi * 4.0 - wavePhase * 1.8) * (speechEnergy * 12.0);
+          const wordWave2 = Math.cos(p.theta * 3.0 - wavePhase * 1.4) * (speechEnergy * 10.0);
+          voiceSoundwave = wordWave1 + wordWave2;
+          acousticBrightness = speechEnergy * 0.75;
+        } else {
+          // Gentle resting breathing undulation
+          voiceSoundwave = Math.sin(time * 2.0 + p.phi * 2.0 + p.theta * 2.0) * 3.0;
+          acousticBrightness = 0.15;
         }
 
         const rSph = baseSphereRadius + voiceSoundwave;
