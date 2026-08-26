@@ -121,8 +121,28 @@ export class SpeechRecognitionService {
 export class DeepgramAudioService {
   private currentAudio: HTMLAudioElement | null = null;
   private currentBlobUrl: string | null = null;
+  private audioContext: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private sourceNode: MediaElementAudioSourceNode | null = null;
+  private animFrameId: number | null = null;
+  private dataArray: Uint8Array | null = null;
   private wordTicker: any = null;
   private sessionId = 0;
+
+  private getAudioContext(): AudioContext | null {
+    if (typeof window === 'undefined') return null;
+    try {
+      if (!this.audioContext || this.audioContext.state === 'closed') {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          this.audioContext = new AudioCtx();
+        }
+      }
+      return this.audioContext;
+    } catch {
+      return null;
+    }
+  }
 
   async speak(
     audioBlob: Blob,
@@ -131,6 +151,7 @@ export class DeepgramAudioService {
       volume?: number;
       rate?: number;
       onStart?: () => void;
+      onLevel?: (level: number, frequencyData: Uint8Array) => void;
       onEnd?: () => void;
       onError?: (err: any) => void;
       onSubtitle?: (subtitle: string, wordIndex: number, totalWords: number) => void;
@@ -145,6 +166,7 @@ export class DeepgramAudioService {
 
       const audio = new Audio();
       audio.src = blobUrl;
+      audio.crossOrigin = 'anonymous';
       audio.volume = Math.max(0, Math.min(1, options.volume ?? 1.0));
       audio.playbackRate = options.rate ?? 1.0;
       this.currentAudio = audio;
@@ -194,8 +216,53 @@ export class DeepgramAudioService {
         options.onSubtitle?.(sub, idx, words.length);
       };
 
-      audio.onplay = () => {
+      audio.onplay = async () => {
         if (this.sessionId !== currentSession) return;
+
+        // Connect real Web Audio API analyser to audio element for zero-lag reactivity
+        const ctx = this.getAudioContext();
+        let connectedAnalyser = false;
+        if (ctx) {
+          try {
+            if (ctx.state === 'suspended') {
+              await ctx.resume().catch(() => {});
+            }
+            if (!this.sourceNode) {
+              this.sourceNode = ctx.createMediaElementSource(audio);
+              this.analyser = ctx.createAnalyser();
+              this.analyser.fftSize = 256;
+              this.analyser.smoothingTimeConstant = 0.65;
+              this.sourceNode.connect(this.analyser);
+              this.analyser.connect(ctx.destination);
+              this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+            }
+            connectedAnalyser = true;
+          } catch (e) {
+            // Fallback gracefully if already hooked or restricted
+          }
+        }
+
+        // Live real-time analysis loop
+        const analyzeLoop = () => {
+          if (this.sessionId !== currentSession || !this.currentAudio || this.currentAudio.paused) return;
+          if (connectedAnalyser && this.analyser && this.dataArray) {
+            this.analyser.getByteFrequencyData(this.dataArray);
+            let sum = 0;
+            for (let i = 0; i < this.dataArray.length; i++) {
+              sum += this.dataArray[i];
+            }
+            const avg = sum / this.dataArray.length;
+            const normalizedLevel = Math.min(1, Math.pow(avg / 90, 1.2));
+            options.onLevel?.(normalizedLevel, this.dataArray);
+          } else {
+            // Fallback subtle wave
+            const simLevel = 0.35 + Math.sin(Date.now() * 0.01) * 0.25;
+            options.onLevel?.(simLevel, new Uint8Array(64).fill(Math.round(simLevel * 180)));
+          }
+          this.animFrameId = requestAnimationFrame(analyzeLoop);
+        };
+        analyzeLoop();
+
         options.onStart?.();
         broadcastSubtitle(0);
 
@@ -242,6 +309,10 @@ export class DeepgramAudioService {
   stop() {
     this.sessionId++;
     clearInterval(this.wordTicker);
+    if (this.animFrameId !== null) {
+      cancelAnimationFrame(this.animFrameId);
+      this.animFrameId = null;
+    }
     if (this.currentAudio) {
       try {
         this.currentAudio.pause();

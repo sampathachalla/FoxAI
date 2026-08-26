@@ -459,27 +459,36 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const fallbackWebSpeech = useCallback(
     (text: string) => {
-      speechSimulatorRef.current.start((simLevel) => {
-        setAudioLevel(simLevel);
-      });
+      // Keep status as 'thinking' until speech actually begins
+      setStatus('thinking');
+      setAudioLevel(0);
+      setFrequencyData(null);
 
       const spoke = speechSynthRef.current.speak(text, {
         voiceURI: voicePrefs.voiceURI,
         pitch: voicePrefs.pitch,
         rate: voicePrefs.rate,
         volume: voicePrefs.volume,
+        onStart: () => {
+          setStatus('speaking');
+          speechSimulatorRef.current.start((simLevel) => {
+            setAudioLevel(simLevel);
+          });
+        },
         onSubtitle: (subtitle) => {
           setSpeakingTranscript(subtitle);
         },
         onEnd: () => {
           speechSimulatorRef.current.stop();
           setAudioLevel(0);
+          setFrequencyData(null);
           setSpeakingTranscript('');
           setStatus('idle');
         },
         onError: () => {
           speechSimulatorRef.current.stop();
           setAudioLevel(0);
+          setFrequencyData(null);
           setSpeakingTranscript('');
           setStatus('idle');
         },
@@ -488,6 +497,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (!spoke) {
         speechSimulatorRef.current.stop();
         setAudioLevel(0);
+        setFrequencyData(null);
         setSpeakingTranscript('');
         setStatus('idle');
       }
@@ -504,8 +514,11 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
 
       cancelSpeaking();
-      setStatus('speaking');
+      // Keep status as 'thinking' while TTS is synthesizing/fetching over network
+      setStatus('thinking');
       setSpeakingTranscript('');
+      setAudioLevel(0);
+      setFrequencyData(null);
 
       // Determine whether to use Deepgram Aura TTS or fallback to browser Web Speech API
       const shouldUseDeepgram =
@@ -515,9 +528,6 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       if (shouldUseDeepgram) {
         setIsSynthesizingTTS(true);
-        speechSimulatorRef.current.start((simLevel) => {
-          setAudioLevel(simLevel);
-        });
 
         try {
           const selectedVoice = voicePrefs.deepgramVoice || 'aura-2-asteria-en';
@@ -527,12 +537,20 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           const played = await deepgramAudioRef.current.speak(audioBlob, text, {
             volume: voicePrefs.volume,
             rate: voicePrefs.rate,
+            onStart: () => {
+              // Switch to speaking ONLY when audio actually starts playing
+              setStatus('speaking');
+            },
+            onLevel: (level, freqData) => {
+              setAudioLevel(level);
+              setFrequencyData(freqData);
+            },
             onSubtitle: (sub) => {
               setSpeakingTranscript(sub);
             },
             onEnd: () => {
-              speechSimulatorRef.current.stop();
               setAudioLevel(0);
+              setFrequencyData(null);
               setSpeakingTranscript('');
               setStatus('idle');
             },
