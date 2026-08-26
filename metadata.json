@@ -1,0 +1,6 @@
+{
+  "name": "Fox - Personal Voice Assistant",
+  "description": "An intelligent voice assistant featuring a dynamic audio-reactive Marvel J.A.R.V.I.S. holographic HUD matrix and spherical intelligence core with Fox Cyan (#99FFFF) theme, real-time voice synthesis, multi-session management, and AI tools.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

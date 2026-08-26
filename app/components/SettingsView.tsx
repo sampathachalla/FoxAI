@@ -1,0 +1,1182 @@
+import React, { useState, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
+import { ACCENT_THEMES } from '../utils/formatters';
+import { SettingsTab, EnginePreferences, HeaderQuickOptionId } from '../types';
+import { ALL_QUICK_OPTIONS } from './QuickAccessPanel';
+import { ModelSelectorDropdown } from './ModelSelectorDropdown';
+import { SoundFXService } from '../utils/audio';
+import {
+  Palette,
+  Mic,
+  Cpu,
+  Database,
+  ArrowLeft,
+  Check,
+  Volume2,
+  VolumeX,
+  Play,
+  Square,
+  Sparkles,
+  Sliders,
+  ShieldCheck,
+  Trash2,
+  Download,
+  RotateCcw,
+  RefreshCw,
+  Zap,
+  Layers,
+  Activity,
+  Terminal,
+  FileText,
+  Clock,
+  ChevronRight,
+  Info,
+} from 'lucide-react';
+
+export const SettingsView: React.FC = () => {
+  const {
+    accentTheme,
+    setAccentTheme,
+    voicePrefs,
+    setVoicePrefs,
+    availableVoices,
+    deepgramVoices,
+    hasDeepgramKey,
+    speakText,
+    cancelSpeaking,
+    settingsTab,
+    setSettingsTab,
+    setAppMode,
+    enginePrefs,
+    setEnginePrefs,
+    sessions,
+    notes,
+    reminders,
+    clearChat,
+    headerQuickOptions,
+    setHeaderQuickOptions,
+    deviceSettings,
+  } = useVoiceAssistant();
+
+  const [editingHeaderSlot, setEditingHeaderSlot] = useState<number | null>(null);
+
+  const [isPlayingTest, setIsPlayingTest] = useState(false);
+  const [testingVoiceId, setTestingVoiceId] = useState<string | null>(null);
+  const [isCopied, setIsCopied] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [testVisualizerLevel, setTestVisualizerLevel] = useState(0);
+  const testIntervalRef = useRef<number | null>(null);
+
+  // Tabs configuration
+  const tabs: { id: SettingsTab; label: string; icon: React.ElementType; desc: string }[] = [
+    {
+      id: 'theme',
+      label: 'Theme & Appearance',
+      icon: Palette,
+      desc: 'Accent spectrum, glassmorphism, and visual lighting',
+    },
+    {
+      id: 'voice',
+      label: 'Voice & Speech',
+      icon: Mic,
+      desc: 'Deepgram Aura neural synthesis, voice selection, pitch, and rate',
+    },
+    {
+      id: 'engine',
+      label: 'Intelligence Engine',
+      icon: Cpu,
+      desc: 'Gemini 3.7 Flash model tuning, persona, and directives',
+    },
+    {
+      id: 'data',
+      label: 'Data & Storage',
+      icon: Database,
+      desc: 'Conversation history, export tools, and storage metrics',
+    },
+  ];
+
+  // Test Voice Speech Playback
+  const handleTestVoice = async () => {
+    if (isPlayingTest) {
+      cancelSpeaking();
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      if (testIntervalRef.current) clearInterval(testIntervalRef.current);
+      setIsPlayingTest(false);
+      setTestVisualizerLevel(0);
+      return;
+    }
+
+    setIsPlayingTest(true);
+
+    testIntervalRef.current = window.setInterval(() => {
+      setTestVisualizerLevel(Math.random() * 0.75 + 0.25);
+    }, 80);
+
+    const activeProvider = voicePrefs.provider || 'auto';
+    const isDeepgram = (activeProvider === 'deepgram' || (activeProvider === 'auto' && hasDeepgramKey)) && hasDeepgramKey;
+
+    const testPhrase = isDeepgram
+      ? `Good day. I am Fox. This is a live neural audio preview powered by Deepgram Aura Text-to-Speech.`
+      : `Good day. I am Fox. This is a live voice preview using ${
+          voicePrefs.voiceURI ? 'your selected synthesizer voice' : 'the system default voice'
+        } at ${voicePrefs.rate}x speed.`;
+
+    try {
+      await speakText(testPhrase);
+    } finally {
+      setTimeout(() => {
+        setIsPlayingTest(false);
+        setTestVisualizerLevel(0);
+        if (testIntervalRef.current) clearInterval(testIntervalRef.current);
+      }, 4000);
+    }
+  };
+
+  const handlePreviewDeepgramVoice = async (voiceId: string) => {
+    if (testingVoiceId === voiceId) {
+      cancelSpeaking();
+      setTestingVoiceId(null);
+      return;
+    }
+
+    setTestingVoiceId(voiceId);
+    // Temporary set selected voice
+    setVoicePrefs({
+      ...voicePrefs,
+      provider: 'deepgram',
+      deepgramVoice: voiceId,
+    });
+
+    const voiceObj = deepgramVoices.find((v) => v.id === voiceId);
+    const phrase = `Hello! I am ${voiceObj ? voiceObj.name : 'Fox'}, speaking with the Deepgram ${voiceObj?.family || 'Aura'} neural model.`;
+
+    try {
+      await speakText(phrase);
+    } finally {
+      setTimeout(() => {
+        setTestingVoiceId(null);
+      }, 3500);
+    }
+  };
+
+  // Export conversations
+  const handleExportData = () => {
+    const dataToExport = {
+      exportDate: new Date().toISOString(),
+      assistant: 'Fox AI',
+      totalSessions: sessions.length,
+      sessions,
+      reminders,
+      notes,
+    };
+
+    const blob = new Blob([JSON.stringify(dataToExport, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `fox_conversations_${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2500);
+  };
+
+  const handleUpdateEngine = (updates: Partial<EnginePreferences>) => {
+    setEnginePrefs({
+      ...enginePrefs,
+      ...updates,
+    });
+  };
+
+  const currentTabInfo = tabs.find((t) => t.id === settingsTab) || tabs[0];
+
+  return (
+    <div className="w-full h-full flex flex-col overflow-hidden text-white">
+      {/* Top Header Bar */}
+      <div className="shrink-0 pb-3 pt-1 border-b border-white/[0.08] flex flex-col md:flex-row md:items-center justify-between gap-3">
+        {/* Back Button & Title */}
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={() => setAppMode('chat')}
+            className="p-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-neutral-300 hover:text-white transition-all cursor-pointer flex items-center space-x-1.5 text-xs font-medium group"
+            title="Back to Conversation"
+          >
+            <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
+            <span>Back to Chat</span>
+          </button>
+
+          <div className="h-4 w-px bg-white/15 hidden sm:block" />
+
+          <div>
+            <div className="flex items-center space-x-2">
+              <h1 className="text-base sm:text-lg font-semibold tracking-tight text-white flex items-center space-x-2">
+                <span>{currentTabInfo.label}</span>
+              </h1>
+              <span
+                className="text-[10px] px-2 py-0.5 rounded-full font-mono font-medium uppercase tracking-wider"
+                style={{
+                  backgroundColor: `${accentTheme.primary}18`,
+                  color: accentTheme.primary,
+                  border: `1px solid ${accentTheme.primary}35`,
+                }}
+              >
+                Settings
+              </span>
+            </div>
+            <p className="text-xs text-neutral-400 hidden sm:block">
+              {currentTabInfo.desc}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Settings Page Content (Scrollable) */}
+      <div className="flex-1 min-h-0 overflow-y-auto py-5 pr-1 space-y-6 custom-scrollbar">
+        <AnimatePresence mode="wait">
+          {/* ========================================================================= */}
+          {/* 1. THEME & APPEARANCE VIEW PAGE */}
+          {/* ========================================================================= */}
+          {settingsTab === 'theme' && (
+            <motion.div
+              key="tab-theme"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              className="space-y-6 max-w-4xl"
+            >
+              {/* Accent Spectrum Grid */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-sm font-semibold text-white tracking-tight">
+                      Accent Color Spectrum
+                    </h2>
+                    <p className="text-xs text-neutral-400">
+                      Select your primary luminescence and 3D visualizer glow signature.
+                    </p>
+                  </div>
+                  <span
+                    className="text-xs font-mono font-medium px-2.5 py-1 rounded-lg border border-white/10"
+                    style={{ color: accentTheme.primary, backgroundColor: 'rgba(0,0,0,0.5)' }}
+                  >
+                    Active: {accentTheme.name}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {ACCENT_THEMES.map((theme) => {
+                    const isSelected = accentTheme.id === theme.id;
+                    return (
+                      <div
+                        key={theme.id}
+                        onClick={() => setAccentTheme(theme)}
+                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between gap-3 text-left relative overflow-hidden group ${
+                          isSelected
+                            ? 'bg-white/[0.12] border-white/40 shadow-xl'
+                            : 'bg-white/[0.03] hover:bg-white/[0.07] border-white/[0.08] hover:border-white/20'
+                        }`}
+                        style={
+                          isSelected
+                            ? {
+                                boxShadow: `0 0 20px ${theme.glow}`,
+                                borderColor: `${theme.primary}80`,
+                              }
+                            : undefined
+                        }
+                      >
+                        {/* Background subtle sheen */}
+                        <div
+                          className="absolute -right-8 -top-8 w-24 h-24 rounded-full blur-2xl pointer-events-none opacity-40 group-hover:opacity-70 transition-opacity"
+                          style={{ backgroundColor: theme.primary }}
+                        />
+
+                        <div className="flex items-center justify-between relative z-10">
+                          <div className="flex items-center space-x-2.5">
+                            <span
+                              className="w-5 h-5 rounded-full ring-2 ring-white/30 shadow-md shrink-0 flex items-center justify-center"
+                              style={{
+                                background: `linear-gradient(135deg, ${theme.primary}, ${theme.secondary})`,
+                              }}
+                            />
+                            <span className="text-xs font-semibold text-white truncate">
+                              {theme.name}
+                            </span>
+                          </div>
+
+                          {isSelected && (
+                            <div
+                              className="w-5 h-5 rounded-full flex items-center justify-center text-black font-bold shrink-0"
+                              style={{ backgroundColor: theme.primary }}
+                            >
+                              <Check className="w-3 h-3 text-black stroke-[3]" />
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between text-[11px] text-neutral-400 font-mono relative z-10">
+                          <span>{theme.primary}</span>
+                          <span className="opacity-60">{theme.secondary}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Header Top 3 Quick Access Configuration */}
+              <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <Sliders className="w-4 h-4 text-cyan-400" />
+                      <h2 className="text-sm font-semibold text-white">Header Top 3 Quick Actions</h2>
+                    </div>
+                    <p className="text-xs text-neutral-400">
+                      Customize which 3 shortcut tools appear permanently in the top navigation header.
+                    </p>
+                  </div>
+                  <span className="text-xs font-mono font-medium px-2.5 py-1 rounded-lg border border-white/10 text-cyan-300 bg-cyan-500/10 self-start sm:self-auto">
+                    Fixed 3 Slots
+                  </span>
+                </div>
+
+                {/* 3 Active Slot Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {headerQuickOptions.slice(0, 3).map((optId, index) => {
+                    const def = ALL_QUICK_OPTIONS.find((o) => o.id === optId) || ALL_QUICK_OPTIONS[0];
+                    const Icon = def.icon;
+                    const isEditing = editingHeaderSlot === index;
+
+                    return (
+                      <button
+                        type="button"
+                        key={index}
+                        onClick={() => {
+                          if (deviceSettings.soundEffects) {
+                            SoundFXService.getInstance().playChime('click');
+                          }
+                          setEditingHeaderSlot(isEditing ? null : index);
+                        }}
+                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between gap-3 text-left relative group ${
+                          isEditing
+                            ? 'bg-white/[0.14] border-white/50 shadow-lg ring-2 ring-cyan-400/40'
+                            : 'bg-white/[0.04] hover:bg-white/[0.08] border-white/[0.08] hover:border-white/20'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between w-full">
+                          <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400">
+                            Slot #{index + 1}
+                          </span>
+                          <span className="text-[10px] font-semibold text-cyan-400 group-hover:text-cyan-300">
+                            {isEditing ? 'Selecting...' : 'Change'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center space-x-3 w-full">
+                          <div
+                            className="w-8 h-8 rounded-xl flex items-center justify-center text-white shrink-0 shadow-sm"
+                            style={{
+                              background: `linear-gradient(135deg, ${accentTheme.primary}40, ${accentTheme.secondary}40)`,
+                              border: `1px solid ${accentTheme.primary}60`,
+                            }}
+                          >
+                            <Icon className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <h4 className="text-xs font-bold text-white truncate">{def.label}</h4>
+                            <p className="text-[10px] text-neutral-400 truncate">{def.shortLabel}</p>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Selection Tray if Editing a Slot */}
+                {editingHeaderSlot !== null && (
+                  <div className="p-4 rounded-2xl bg-white/[0.04] border border-white/15 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-semibold text-white mb-2">
+                      <span>Choose Action for Slot #{editingHeaderSlot + 1}:</span>
+                      <button
+                        onClick={() => setEditingHeaderSlot(null)}
+                        className="text-neutral-400 hover:text-white underline cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-60 overflow-y-auto no-scrollbar">
+                      {ALL_QUICK_OPTIONS.map((option) => {
+                        const Icon = option.icon;
+                        const activeIdx = headerQuickOptions.indexOf(option.id);
+                        const isSelected = headerQuickOptions[editingHeaderSlot] === option.id;
+
+                        return (
+                          <button
+                            key={option.id}
+                            type="button"
+                            onClick={() => {
+                              const newOpts = [...headerQuickOptions];
+                              const swapIdx = newOpts.indexOf(option.id);
+                              if (swapIdx !== -1 && swapIdx !== editingHeaderSlot) {
+                                newOpts[swapIdx] = newOpts[editingHeaderSlot];
+                              }
+                              newOpts[editingHeaderSlot] = option.id;
+                              setHeaderQuickOptions(newOpts);
+                              if (deviceSettings.soundEffects) {
+                                SoundFXService.getInstance().playChime('click');
+                              }
+                              setEditingHeaderSlot(null);
+                            }}
+                            className={`p-2.5 rounded-xl border flex items-center justify-between text-left transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-cyan-500/20 border-cyan-400/40 text-white font-bold'
+                                : 'bg-white/[0.02] border-white/[0.06] hover:bg-white/10 text-neutral-300'
+                            }`}
+                          >
+                            <div className="flex items-center space-x-2.5 min-w-0">
+                              <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0">
+                                <Icon className="w-3.5 h-3.5 text-white" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-xs font-semibold truncate">{option.label}</div>
+                                <div className="text-[9px] text-neutral-400 truncate">{option.description}</div>
+                              </div>
+                            </div>
+
+                            {activeIdx !== -1 && (
+                              <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 shrink-0 ml-1">
+                                #{activeIdx + 1}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* 2. VOICE & SPEECH VIEW PAGE */}
+          {/* ========================================================================= */}
+          {settingsTab === 'voice' && (
+            <motion.div
+              key="tab-voice"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              className="space-y-6 max-w-4xl"
+            >
+              {/* Voice Synthesis Master Toggle */}
+              <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center space-x-2">
+                    <Volume2 className="w-4 h-4 text-cyan-400" />
+                    <h2 className="text-sm font-semibold text-white">Voice Synthesis Auto-Speak</h2>
+                  </div>
+                  <p className="text-xs text-neutral-400">
+                    Automatically speak Fox's replies aloud upon generation in Voice and Chat modes.
+                  </p>
+                </div>
+
+                <button
+                  onClick={() =>
+                    setVoicePrefs({ ...voicePrefs, autoSpeak: !voicePrefs.autoSpeak })
+                  }
+                  className={`w-14 h-8 rounded-full p-1 transition-colors cursor-pointer shrink-0 ${
+                    voicePrefs.autoSpeak ? 'bg-[#007AFF]' : 'bg-neutral-800'
+                  }`}
+                  style={voicePrefs.autoSpeak ? { backgroundColor: accentTheme.primary } : undefined}
+                >
+                  <div
+                    className={`w-6 h-6 rounded-full bg-white transition-transform shadow-md ${
+                      voicePrefs.autoSpeak ? 'translate-x-6' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* TTS Engine Provider Selector */}
+              <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <Zap className="w-4 h-4 text-cyan-400" />
+                      <h2 className="text-sm font-semibold text-white">Text-to-Speech Engine Provider</h2>
+                    </div>
+                    <p className="text-xs text-neutral-400">
+                      Select between cloud-powered Deepgram Aura neural models or browser native synthesis.
+                    </p>
+                  </div>
+                  <div className="flex items-center space-x-2 self-start sm:self-auto">
+                    {hasDeepgramKey ? (
+                      <span className="text-[10px] font-mono font-medium px-2.5 py-1 rounded-full border border-emerald-500/30 text-emerald-300 bg-emerald-500/10 flex items-center space-x-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        <span>Deepgram API Active</span>
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-mono font-medium px-2.5 py-1 rounded-full border border-amber-500/30 text-amber-300 bg-amber-500/10">
+                        Browser Mode Active
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Deepgram Aura Provider Card */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVoicePrefs({
+                        ...voicePrefs,
+                        provider: 'deepgram',
+                        deepgramVoice: voicePrefs.deepgramVoice || 'aura-2-asteria-en',
+                      });
+                    }}
+                    className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative flex flex-col justify-between space-y-3 ${
+                      (voicePrefs.provider === 'deepgram' || (voicePrefs.provider === 'auto' && hasDeepgramKey))
+                        ? 'bg-cyan-950/30 border-cyan-400/50 shadow-lg ring-1 ring-cyan-400/30'
+                        : 'bg-white/[0.02] border-white/[0.08] hover:bg-white/[0.05] text-neutral-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <div
+                          className="w-8 h-8 rounded-xl flex items-center justify-center text-white"
+                          style={{
+                            backgroundColor: `${accentTheme.primary}25`,
+                            border: `1px solid ${accentTheme.primary}50`,
+                          }}
+                        >
+                          <Sparkles className="w-4 h-4" style={{ color: accentTheme.primary }} />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-white flex items-center space-x-1.5">
+                            <span>Deepgram Aura Neural TTS</span>
+                            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-cyan-400/20 text-cyan-300">
+                              Aura-2 & 1
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-neutral-400">High-fidelity conversational AI voice</div>
+                        </div>
+                      </div>
+                      {(voicePrefs.provider === 'deepgram' || (voicePrefs.provider === 'auto' && hasDeepgramKey)) && (
+                        <div
+                          className="w-5 h-5 rounded-full flex items-center justify-center text-black"
+                          style={{ backgroundColor: accentTheme.primary }}
+                        >
+                          <Check className="w-3 h-3 stroke-[3]" />
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-neutral-400 leading-relaxed">
+                      Studio-quality neural voices with low latency (&lt;250ms), conversational inflections, and natural breathing pauses.
+                    </p>
+                  </button>
+
+                  {/* Web Speech API Card */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVoicePrefs({
+                        ...voicePrefs,
+                        provider: 'webspeech',
+                      });
+                    }}
+                    className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative flex flex-col justify-between space-y-3 ${
+                      voicePrefs.provider === 'webspeech'
+                        ? 'bg-cyan-950/30 border-cyan-400/50 shadow-lg ring-1 ring-cyan-400/30'
+                        : 'bg-white/[0.02] border-white/[0.08] hover:bg-white/[0.05] text-neutral-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center text-white border border-white/15">
+                          <Mic className="w-4 h-4 text-neutral-300" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-white">Browser Web Speech API</div>
+                          <div className="text-[10px] text-neutral-400">Local offline speech synthesizer</div>
+                        </div>
+                      </div>
+                      {voicePrefs.provider === 'webspeech' && (
+                        <div
+                          className="w-5 h-5 rounded-full flex items-center justify-center text-black"
+                          style={{ backgroundColor: accentTheme.primary }}
+                        >
+                          <Check className="w-3 h-3 stroke-[3]" />
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-neutral-400 leading-relaxed">
+                      Uses your device's built-in text-to-speech engine. Works offline without network requests.
+                    </p>
+                  </button>
+                </div>
+              </div>
+
+              {/* Deepgram Aura Voice Library Grid (When Deepgram is active) */}
+              {(voicePrefs.provider !== 'webspeech') && (
+                <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-2">
+                        <Sparkles className="w-4 h-4 text-cyan-400" />
+                        <h3 className="text-sm font-semibold text-white">Deepgram Aura Voice Library</h3>
+                      </div>
+                      <p className="text-xs text-neutral-400">
+                        Choose your primary neural persona. Preview voices directly before selecting.
+                      </p>
+                    </div>
+                    <span className="text-[10px] font-mono text-neutral-400 self-start sm:self-auto">
+                      Active: {voicePrefs.deepgramVoice || 'aura-2-asteria-en'}
+                    </span>
+                  </div>
+
+                  {/* Voices Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
+                    {deepgramVoices.map((voice) => {
+                      const isSelected = (voicePrefs.deepgramVoice || 'aura-2-asteria-en') === voice.id;
+                      const isTestingThis = testingVoiceId === voice.id;
+
+                      return (
+                        <div
+                          key={voice.id}
+                          onClick={() => {
+                            setVoicePrefs({
+                              ...voicePrefs,
+                              provider: 'deepgram',
+                              deepgramVoice: voice.id,
+                            });
+                          }}
+                          className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2.5 relative ${
+                            isSelected
+                              ? 'bg-cyan-500/15 border-cyan-400/50 shadow-md ring-1 ring-cyan-400/40'
+                              : 'bg-white/[0.02] hover:bg-white/[0.06] border-white/[0.08] hover:border-white/20'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="flex items-center space-x-1.5 flex-wrap gap-y-1">
+                                <span className="text-xs font-bold text-white">{voice.name}</span>
+                                <span
+                                  className={`text-[9px] font-mono px-1.5 py-0.2 rounded font-semibold ${
+                                    voice.family === 'Aura-2'
+                                      ? 'bg-cyan-400/20 text-cyan-300 border border-cyan-400/30'
+                                      : 'bg-white/10 text-neutral-300'
+                                  }`}
+                                >
+                                  {voice.family}
+                                </span>
+                                {voice.recommended && (
+                                  <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                                    Top Pick
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-neutral-400 capitalize flex items-center space-x-1 mt-0.5">
+                                <span>{voice.gender}</span>
+                                <span>•</span>
+                                <span>{voice.accent}</span>
+                              </div>
+                            </div>
+
+                            {isSelected && (
+                              <div
+                                className="w-5 h-5 rounded-full flex items-center justify-center text-black shrink-0"
+                                style={{ backgroundColor: accentTheme.primary }}
+                              >
+                                <Check className="w-3 h-3 stroke-[3]" />
+                              </div>
+                            )}
+                          </div>
+
+                          <p className="text-[11px] text-neutral-300 leading-snug line-clamp-2">
+                            {voice.description}
+                          </p>
+
+                          <div className="pt-1 border-t border-white/[0.06] flex items-center justify-between">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handlePreviewDeepgramVoice(voice.id);
+                              }}
+                              className={`px-2.5 py-1 rounded-xl text-[10px] font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${
+                                isTestingThis
+                                  ? 'bg-rose-500 text-white'
+                                  : 'bg-white/10 hover:bg-white/20 text-white border border-white/10'
+                              }`}
+                            >
+                              {isTestingThis ? (
+                                <>
+                                  <Square className="w-2.5 h-2.5 fill-current" />
+                                  <span>Stop</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Play className="w-2.5 h-2.5 fill-current" />
+                                  <span>Listen Sample</span>
+                                </>
+                              )}
+                            </button>
+
+                            <span className="text-[9px] font-mono text-neutral-500 truncate max-w-[110px]">
+                              {voice.id}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Web Speech Voice Selector (When Web Speech is active) */}
+              {voicePrefs.provider === 'webspeech' && (
+                <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] space-y-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-white">Browser Synthesizer Voice Profile</h3>
+                    <p className="text-xs text-neutral-400">
+                      Choose from local voice profiles installed on your operating system.
+                    </p>
+                  </div>
+
+                  <select
+                    value={voicePrefs.voiceURI}
+                    onChange={(e) => setVoicePrefs({ ...voicePrefs, voiceURI: e.target.value })}
+                    className="w-full bg-black/60 border border-white/15 rounded-2xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-cyan-400 cursor-pointer"
+                  >
+                    <option value="">Default System Natural Voice</option>
+                    {availableVoices
+                      .filter((v) => v.lang.startsWith('en'))
+                      .map((v) => (
+                        <option key={v.voiceURI} value={v.voiceURI}>
+                          {v.name} ({v.lang})
+                        </option>
+                      ))}
+                    {availableVoices.filter((v) => !v.lang.startsWith('en')).length > 0 && (
+                      <optgroup label="International Voices">
+                        {availableVoices
+                          .filter((v) => !v.lang.startsWith('en'))
+                          .map((v) => (
+                            <option key={v.voiceURI} value={v.voiceURI}>
+                              {v.name} ({v.lang})
+                            </option>
+                          ))}
+                      </optgroup>
+                    )}
+                  </select>
+                </div>
+              )}
+
+              {/* Sliders Grid: Rate, Pitch, Volume */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Rate */}
+                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] space-y-2.5">
+                  <div className="flex justify-between items-center text-xs font-medium">
+                    <span className="text-neutral-300">Speaking Rate</span>
+                    <span
+                      className="font-mono px-2 py-0.5 rounded bg-white/10 text-white text-[11px]"
+                      style={{ color: accentTheme.primary }}
+                    >
+                      {voicePrefs.rate}x
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.75"
+                    max="1.5"
+                    step="0.05"
+                    value={voicePrefs.rate}
+                    onChange={(e) =>
+                      setVoicePrefs({ ...voicePrefs, rate: parseFloat(e.target.value) })
+                    }
+                    className="w-full accent-cyan-400 bg-neutral-800 rounded-lg h-2 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-neutral-500 font-mono">
+                    <span>0.75x (Relaxed)</span>
+                    <span>1.5x (Fast)</span>
+                  </div>
+                </div>
+
+                {/* Pitch */}
+                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] space-y-2.5">
+                  <div className="flex justify-between items-center text-xs font-medium">
+                    <span className="text-neutral-300">Voice Pitch</span>
+                    <span
+                      className="font-mono px-2 py-0.5 rounded bg-white/10 text-white text-[11px]"
+                      style={{ color: accentTheme.primary }}
+                    >
+                      {voicePrefs.pitch}x
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.8"
+                    max="1.3"
+                    step="0.05"
+                    value={voicePrefs.pitch}
+                    onChange={(e) =>
+                      setVoicePrefs({ ...voicePrefs, pitch: parseFloat(e.target.value) })
+                    }
+                    className="w-full accent-cyan-400 bg-neutral-800 rounded-lg h-2 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-neutral-500 font-mono">
+                    <span>0.8x (Deep)</span>
+                    <span>1.3x (Higher)</span>
+                  </div>
+                </div>
+
+                {/* Volume */}
+                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] space-y-2.5">
+                  <div className="flex justify-between items-center text-xs font-medium">
+                    <span className="text-neutral-300">Speech Volume</span>
+                    <span
+                      className="font-mono px-2 py-0.5 rounded bg-white/10 text-white text-[11px]"
+                      style={{ color: accentTheme.primary }}
+                    >
+                      {Math.round(voicePrefs.volume * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.2"
+                    max="1.0"
+                    step="0.05"
+                    value={voicePrefs.volume}
+                    onChange={(e) =>
+                      setVoicePrefs({ ...voicePrefs, volume: parseFloat(e.target.value) })
+                    }
+                    className="w-full accent-cyan-400 bg-neutral-800 rounded-lg h-2 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-neutral-500 font-mono">
+                    <span>20%</span>
+                    <span>100%</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Live Speech Tester Box */}
+              <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-white">Audio Synthesizer Test</h3>
+                    <p className="text-xs text-neutral-400">
+                      Preview the active speech synthesis profile instantly.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={handleTestVoice}
+                    className="px-4 py-2 rounded-xl font-semibold text-xs transition-all flex items-center space-x-2 cursor-pointer shadow-md hover:scale-105"
+                    style={{
+                      backgroundColor: isPlayingTest ? '#ef4444' : accentTheme.primary,
+                      color: isPlayingTest ? '#ffffff' : '#000000',
+                    }}
+                  >
+                    {isPlayingTest ? (
+                      <>
+                        <Square className="w-3.5 h-3.5 fill-current" />
+                        <span>Stop Audio Test</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-3.5 h-3.5 fill-current" />
+                        <span>Test Voice Output</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Animated visualizer bar when playing */}
+                {isPlayingTest && (
+                  <div className="p-3 rounded-2xl bg-black/50 border border-white/10 flex items-center justify-center space-x-1.5 h-12">
+                    {[...Array(16)].map((_, i) => (
+                      <motion.div
+                        key={i}
+                        animate={{
+                          height: [6, Math.max(6, Math.random() * 32 * testVisualizerLevel), 6],
+                        }}
+                        transition={{
+                          repeat: Infinity,
+                          duration: 0.35 + (i % 4) * 0.1,
+                          ease: 'easeInOut',
+                        }}
+                        className="w-1.5 rounded-full"
+                        style={{ backgroundColor: accentTheme.primary }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* 3. INTELLIGENCE ENGINE VIEW PAGE */}
+          {/* ========================================================================= */}
+          {settingsTab === 'engine' && (
+            <motion.div
+              key="tab-engine"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              className="space-y-6 max-w-4xl"
+            >
+              {/* Provider & Model Selection Matrix */}
+              <ModelSelectorDropdown variant="embedded" />
+
+              {/* Persona / Behavioral Presets */}
+              <div className="space-y-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-white">Persona & Response Mode</h3>
+                  <p className="text-xs text-neutral-400">
+                    Select how Fox structures answers, tone, and technical depth.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[
+                    {
+                      id: 'adaptive',
+                      title: 'Adaptive Conversational',
+                      desc: 'Natural, intelligent, and context-sensitive assistant.',
+                      badge: 'Default',
+                    },
+                    {
+                      id: 'executive',
+                      title: 'Executive Briefing',
+                      desc: 'Crisp bullet points, high-impact decisions, zero filler.',
+                      badge: 'Concise',
+                    },
+                    {
+                      id: 'technical',
+                      title: 'Code & Technical Architect',
+                      desc: 'Strict code blocks, architectural patterns, and debugging.',
+                      badge: 'Deep Tech',
+                    },
+                    {
+                      id: 'creative',
+                      title: 'Creative & Brainstorming',
+                      desc: 'Expansive idea generation and articulate storytelling.',
+                      badge: 'Exploratory',
+                    },
+                  ].map((preset) => {
+                    const isSelected = enginePrefs.personaMode === preset.id;
+                    return (
+                      <div
+                        key={preset.id}
+                        onClick={() =>
+                          handleUpdateEngine({
+                            personaMode: preset.id as EnginePreferences['personaMode'],
+                          })
+                        }
+                        className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between gap-2 text-left ${
+                          isSelected
+                            ? 'bg-white/[0.12] border-white/40 shadow-md'
+                            : 'bg-white/[0.03] hover:bg-white/[0.07] border-white/[0.08]'
+                        }`}
+                        style={
+                          isSelected
+                            ? {
+                                borderColor: accentTheme.primary,
+                                boxShadow: `0 0 16px ${accentTheme.glow}`,
+                              }
+                            : undefined
+                        }
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-semibold text-white">{preset.title}</span>
+                          <span
+                            className="text-[10px] font-mono px-2 py-0.5 rounded-full"
+                            style={{
+                              backgroundColor: isSelected ? `${accentTheme.primary}25` : 'rgba(255,255,255,0.05)',
+                              color: isSelected ? accentTheme.primary : '#a3a3a3',
+                            }}
+                          >
+                            {preset.badge}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-neutral-400 leading-relaxed">{preset.desc}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Temperature & Latency Sliders */}
+              <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] space-y-4">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h3 className="text-sm font-semibold text-white">Creativity & Temperature</h3>
+                    <p className="text-xs text-neutral-400">
+                      Higher values increase idea variability; lower values ensure deterministic precision.
+                    </p>
+                  </div>
+                  <span
+                    className="font-mono text-xs px-2.5 py-1 rounded-lg bg-white/10 text-white"
+                    style={{ color: accentTheme.primary }}
+                  >
+                    {enginePrefs.temperature}
+                  </span>
+                </div>
+
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={enginePrefs.temperature}
+                  onChange={(e) =>
+                    handleUpdateEngine({ temperature: parseFloat(e.target.value) })
+                  }
+                  className="w-full accent-cyan-400 bg-neutral-800 rounded-lg h-2 cursor-pointer"
+                />
+
+                <div className="flex justify-between text-[11px] text-neutral-500 font-mono">
+                  <span>0.1 (Strict & Precise)</span>
+                  <span>0.7 (Balanced)</span>
+                  <span>1.0 (Creative)</span>
+                </div>
+              </div>
+
+              {/* Custom System Directives */}
+              <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-white">Custom System Directives</h3>
+                    <p className="text-xs text-neutral-400">
+                      Persistent instructions embedded into every prompt context.
+                    </p>
+                  </div>
+                </div>
+
+                <textarea
+                  rows={3}
+                  value={enginePrefs.systemPrompt}
+                  onChange={(e) => handleUpdateEngine({ systemPrompt: e.target.value })}
+                  placeholder="e.g. Always respond in markdown format and provide concise action steps."
+                  className="w-full bg-black/60 border border-white/15 rounded-2xl p-3 text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-cyan-400 leading-relaxed font-mono"
+                />
+              </div>
+            </motion.div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* 4. DATA & STORAGE VIEW PAGE */}
+          {/* ========================================================================= */}
+          {settingsTab === 'data' && (
+            <motion.div
+              key="tab-data"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              className="space-y-6 max-w-4xl"
+            >
+              {/* Storage Overview Metrics */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] space-y-1">
+                  <span className="text-[10px] font-mono text-neutral-400 uppercase">Conversations</span>
+                  <div className="text-xl font-bold text-white">{sessions.length}</div>
+                </div>
+                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] space-y-1">
+                  <span className="text-[10px] font-mono text-neutral-400 uppercase">Captured Notes</span>
+                  <div className="text-xl font-bold text-white">{notes.length}</div>
+                </div>
+                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] space-y-1">
+                  <span className="text-[10px] font-mono text-neutral-400 uppercase">Reminders</span>
+                  <div className="text-xl font-bold text-white">{reminders.length}</div>
+                </div>
+                <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] space-y-1">
+                  <span className="text-[10px] font-mono text-neutral-400 uppercase">Persistence</span>
+                  <div className="text-xs font-semibold text-emerald-400 pt-1">Active LocalSync</div>
+                </div>
+              </div>
+
+              {/* Export Data */}
+              <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold text-white">Export Conversation Archives</h3>
+                  <p className="text-xs text-neutral-400">
+                    Download complete chat sessions, captured notes, and reminders as structured JSON.
+                  </p>
+                </div>
+
+                <button
+                  onClick={handleExportData}
+                  className="px-4 py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/15 border border-white/15 text-white text-xs font-medium transition-all flex items-center space-x-2 cursor-pointer shrink-0"
+                >
+                  {isCopied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Exported!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Export All Data</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Danger Zone: Clear History */}
+              <div className="p-5 rounded-3xl bg-rose-500/[0.04] border border-rose-500/20 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-rose-400">Clear Conversation History</h3>
+                    <p className="text-xs text-neutral-400">
+                      Reset all current conversation threads and start fresh.
+                    </p>
+                  </div>
+
+                  {!showClearConfirm ? (
+                    <button
+                      onClick={() => setShowClearConfirm(true)}
+                      className="px-4 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 text-xs font-medium transition-all cursor-pointer"
+                    >
+                      Clear History
+                    </button>
+                  ) : (
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => {
+                          clearChat();
+                          setShowClearConfirm(false);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold transition-all cursor-pointer"
+                      >
+                        Confirm Delete
+                      </button>
+                      <button
+                        onClick={() => setShowClearConfirm(false)}
+                        className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-neutral-300 text-xs font-medium cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+};

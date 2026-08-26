@@ -1,0 +1,18 @@
+services:
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: fox-jarvis-api
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - NODE_ENV=development
+    env_file:
+      - path: ./api/.env
+        required: false
+    volumes:
+      - ./api:/app
+      - /app/node_modules
+    restart: unless-stopped

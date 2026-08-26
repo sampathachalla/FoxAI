@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fox — Personal Voice Assistant</title>
+    <meta name="description" content="Fox — Intelligent voice assistant featuring audio-reactive 3D brain and spherical intelligence core with Fox Cyan (#99FFFF) theme." />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      // Gracefully silence harmless Vite HMR WebSocket connection notices in sandboxed iframe preview
+      (function() {
+        window.addEventListener('unhandledrejection', function(e) {
+          var reason = (e && (e.reason && (e.reason.message || e.reason.stack || e.reason))) || (e && e.message) || String(e);
+          var reasonStr = String(reason).toLowerCase();
+          if (reasonStr.includes('websocket') || reasonStr.includes('failed to connect to websocket')) {
+            e.preventDefault();
+            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+          }
+        });
+        window.addEventListener('error', function(e) {
+          var msg = (e && (e.message || e.error)) || '';
+          var msgStr = String(msg).toLowerCase();
+          if (msgStr.includes('websocket')) {
+            e.preventDefault();
+            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+          }
+        });
+      })();
+    </script>
+  </head>
+  <body class="bg-[#07080c] text-white antialiased font-['Plus_Jakarta_Sans',-apple-system,BlinkMacSystemFont,sans-serif]">
+    <div id="root"></div>
+    <script type="module" src="/main.tsx"></script>
+  </body>
+</html>
+

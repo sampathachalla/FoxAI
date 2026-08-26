@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+/* Artistic Flair Design System */
+:root {
+  --accent-blue: #007AFF;
+}
+
+body {
+  background-color: #000000;
+  color: #ffffff;
+}
+
+/* Glass Card Styling matching Artistic Flair */
+.glass-card {
+  background: rgba(20, 20, 20, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+}
+
+.glass-card-interactive {
+  background: rgba(20, 20, 20, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-card-interactive:hover {
+  background: rgba(28, 28, 30, 0.75);
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 12px 30px -10px rgba(0, 122, 255, 0.15);
+}
+
+/* Orb Layer Classes */
+.orb-layer {
+  position: absolute;
+  border-radius: 50%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.orb-outer {
+  width: 520px;
+  height: 520px;
+  background: radial-gradient(circle, rgba(0, 122, 255, 0.15) 0%, transparent 70%);
+  filter: blur(40px);
+}
+
+.orb-mid {
+  width: 340px;
+  height: 340px;
+  background: radial-gradient(circle, rgba(0, 122, 255, 0.4) 0%, transparent 80%);
+  filter: blur(30px);
+}
+
+.orb-inner {
+  width: 180px;
+  height: 180px;
+  background: #007AFF;
+  box-shadow: 0 0 80px 20px rgba(0, 122, 255, 0.6);
+}
+
+.orb-core {
+  width: 140px;
+  height: 140px;
+  background: linear-gradient(135deg, #ffffff 0%, #007AFF 60%);
+  filter: blur(2px);
+}
+
+/* Custom Sleek Scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 122, 255, 0.5);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
