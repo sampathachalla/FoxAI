@@ -12,7 +12,7 @@ class LLMClient:
 
     async def generate_with_usage(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
         if self.openai_client:
-            target_model = self.model if ("gpt" in self.model or self.model.startswith("o")) else "gpt-4o-mini"
+            target_model = self.model if ("gpt" in self.model or self.model.startswith("o")) else "gpt-5-nano"
             is_nano_or_reasoning = "nano" in target_model or target_model.startswith("o1") or target_model.startswith("o3")
             params: Dict[str, Any] = {
                 "model": target_model,

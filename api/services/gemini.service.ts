@@ -61,7 +61,7 @@ export async function generateAssistantResponse(
 }> {
   // 1. If OpenAI API Key is present or OpenAI provider is selected, call OpenAI / GPT-5 Nano first
   if (hasOpenAIKey() || selectedProvider === 'openai' || (selectedModel && selectedModel.toLowerCase().includes('gpt'))) {
-    const openAIModel = selectedModel && selectedModel.toLowerCase().includes('gpt') ? selectedModel : 'gpt-4o-mini';
+    const openAIModel = selectedModel && selectedModel.toLowerCase().includes('gpt') ? selectedModel : 'gpt-5-nano';
     const openAIResult = await generateOpenAIResponse(prompt, history, personaPrompt, openAIModel);
     if (openAIResult && openAIResult.text) {
       return openAIResult;
@@ -173,7 +173,7 @@ export async function* streamAssistantResponse(
 ): AsyncGenerator<string, void, unknown> {
   // 1. If OpenAI API Key is present or OpenAI provider is selected, stream from OpenAI first
   if (hasOpenAIKey() || selectedProvider === 'openai' || (selectedModel && selectedModel.toLowerCase().includes('gpt'))) {
-    const openAIModel = selectedModel && selectedModel.toLowerCase().includes('gpt') ? selectedModel : 'gpt-4o-mini';
+    const openAIModel = selectedModel && selectedModel.toLowerCase().includes('gpt') ? selectedModel : 'gpt-5-nano';
     let yieldedFromOpenAI = false;
     for await (const chunk of streamOpenAIResponse(prompt, history, personaPrompt, openAIModel)) {
       yieldedFromOpenAI = true;

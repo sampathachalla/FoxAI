@@ -177,7 +177,7 @@ export async function handleSystemStatus(req: Request, res: Response): Promise<v
   
   let engineName = 'Local Intelligence Kernel';
   if (hasOAIKey) {
-    engineName = 'GPT-4o-mini (OpenAI) + Deepgram Aura';
+    engineName = 'GPT-5 Nano (OpenAI) + Deepgram Aura';
   } else if (hasGeminiKey) {
     engineName = 'Gemini 2.0 Flash + Deepgram Aura';
   }
@@ -192,7 +192,7 @@ export async function handleSystemStatus(req: Request, res: Response): Promise<v
     hasGeminiKey: hasGeminiKey,
     hasDeepgramKey: hasDGKey,
     deepgramModel: 'aura-2-asteria-en',
-    defaultModel: hasOAIKey ? 'gpt-4o-mini' : 'gemini-2.0-flash',
+    defaultModel: hasOAIKey ? 'gpt-5-nano' : 'gemini-2.0-flash',
     supportedModals: ['text', 'voice', 'deepgram-tts', 'audio-reactive', 'system-tools'],
   });
 }

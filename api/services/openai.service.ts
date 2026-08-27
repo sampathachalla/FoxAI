@@ -28,13 +28,13 @@ Your characteristics:
 4. When relevant, you can execute structured actions using tool declarations or markdown cards.
 `;
 
-const CANDIDATE_MODELS = ['gpt-4o-mini', 'gpt-4o', 'gpt-3.5-turbo'];
+const CANDIDATE_MODELS = ['gpt-5-nano', 'gpt-4o-mini', 'gpt-4o', 'gpt-3.5-turbo'];
 
 export async function generateOpenAIResponse(
   prompt: string,
   history: ChatMessage[] = [],
   personaPrompt?: string,
-  selectedModel: string = 'gpt-4o-mini'
+  selectedModel: string = 'gpt-5-nano'
 ): Promise<{
   text: string;
   toolsDetected?: AssistantToolCall[];
@@ -58,13 +58,14 @@ export async function generateOpenAIResponse(
   messages.push({ role: 'user', content: prompt });
 
   let modelsToTry = [
-    selectedModel || 'gpt-4o-mini',
+    selectedModel || 'gpt-5-nano',
     ...CANDIDATE_MODELS.filter((m) => m !== selectedModel),
   ];
 
   for (const modelName of modelsToTry) {
     try {
       const isReasoningOrFixedTempModel =
+        modelName.includes('gpt-5') ||
         modelName.includes('o1') ||
         modelName.includes('o3');
 
@@ -99,7 +100,7 @@ export async function* streamOpenAIResponse(
   prompt: string,
   history: ChatMessage[] = [],
   personaPrompt?: string,
-  selectedModel: string = 'gpt-4o-mini'
+  selectedModel: string = 'gpt-5-nano'
 ): AsyncGenerator<string, void, unknown> {
   const client = getOpenAIClient();
   if (!client) return;
@@ -119,13 +120,14 @@ export async function* streamOpenAIResponse(
   messages.push({ role: 'user', content: prompt });
 
   let modelsToTry = [
-    selectedModel || 'gpt-4o-mini',
+    selectedModel || 'gpt-5-nano',
     ...CANDIDATE_MODELS.filter((m) => m !== selectedModel),
   ];
 
   for (const modelName of modelsToTry) {
     try {
       const isReasoningOrFixedTempModel =
+        modelName.includes('gpt-5') ||
         modelName.includes('o1') ||
         modelName.includes('o3');
 
