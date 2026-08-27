@@ -11,6 +11,21 @@ import {
   hasLocalLlmKey,
   isLocalLlmModel,
 } from './localLlm.service';
+import {
+  generateAnthropicResponse,
+  streamAnthropicResponse,
+  hasAnthropicKey,
+} from './anthropic.service';
+import {
+  generateDeepSeekResponse,
+  streamDeepSeekResponse,
+  hasDeepSeekKey,
+} from './deepseek.service';
+import {
+  generateGroqResponse,
+  streamGroqResponse,
+  hasGroqKey,
+} from './groq.service';
 import { detectToolsFromPromptAndResponse } from '../utils/toolDetection';
 
 let genAIClient: GoogleGenAI | null = null;
@@ -65,7 +80,31 @@ export async function generateAssistantResponse(
   sources?: { title: string; url: string }[];
   isQuotaFallback?: boolean;
 }> {
-  // 1. If Local LLM / Ollama provider is selected or a local model is chosen or Local LLM key is configured
+  // 1. Anthropic Claude Provider
+  if (selectedProvider === 'anthropic' || (selectedModel && selectedModel.toLowerCase().includes('claude')) || (hasAnthropicKey() && !hasOpenAIKey() && !process.env.GEMINI_API_KEY && !hasLocalLlmKey())) {
+    const anthropicResult = await generateAnthropicResponse(prompt, history, personaPrompt, selectedModel);
+    if (anthropicResult && anthropicResult.text) {
+      return anthropicResult;
+    }
+  }
+
+  // 2. DeepSeek Provider
+  if (selectedProvider === 'deepseek' || (selectedModel && selectedModel.toLowerCase().includes('deepseek'))) {
+    const deepseekResult = await generateDeepSeekResponse(prompt, history, personaPrompt, selectedModel);
+    if (deepseekResult && deepseekResult.text) {
+      return deepseekResult;
+    }
+  }
+
+  // 3. Groq LPUs Provider
+  if (selectedProvider === 'groq' || (selectedModel && (selectedModel.toLowerCase().includes('groq') || selectedModel.toLowerCase().includes('mixtral')))) {
+    const groqResult = await generateGroqResponse(prompt, history, personaPrompt, selectedModel);
+    if (groqResult && groqResult.text) {
+      return groqResult;
+    }
+  }
+
+  // 4. Local LLM / Ollama Provider
   if (selectedProvider === 'ollama' || selectedProvider === 'local' || isLocalLlmModel(selectedModel) || (hasLocalLlmKey() && !hasOpenAIKey() && !process.env.GEMINI_API_KEY)) {
     const localResult = await generateLocalLlmResponse(prompt, history, personaPrompt, selectedModel);
     if (localResult && localResult.text) {
@@ -73,7 +112,7 @@ export async function generateAssistantResponse(
     }
   }
 
-  // 2. If OpenAI API Key is present or OpenAI provider is selected, call OpenAI / GPT-5 Nano first
+  // 5. OpenAI Provider
   if (hasOpenAIKey() || selectedProvider === 'openai' || (selectedModel && selectedModel.toLowerCase().includes('gpt'))) {
     const openAIModel = selectedModel && selectedModel.toLowerCase().includes('gpt') ? selectedModel : 'gpt-5-nano';
     const openAIResult = await generateOpenAIResponse(prompt, history, personaPrompt, openAIModel);
@@ -185,7 +224,37 @@ export async function* streamAssistantResponse(
   selectedModel?: string,
   selectedProvider?: string
 ): AsyncGenerator<string, void, unknown> {
-  // 1. If Local LLM / Ollama provider is selected or a local model is chosen or Local LLM key is configured
+  // 1. Anthropic Claude Provider
+  if (selectedProvider === 'anthropic' || (selectedModel && selectedModel.toLowerCase().includes('claude')) || (hasAnthropicKey() && !hasOpenAIKey() && !process.env.GEMINI_API_KEY && !hasLocalLlmKey())) {
+    let yielded = false;
+    for await (const chunk of streamAnthropicResponse(prompt, history, personaPrompt, selectedModel)) {
+      yielded = true;
+      yield chunk;
+    }
+    if (yielded) return;
+  }
+
+  // 2. DeepSeek Provider
+  if (selectedProvider === 'deepseek' || (selectedModel && selectedModel.toLowerCase().includes('deepseek'))) {
+    let yielded = false;
+    for await (const chunk of streamDeepSeekResponse(prompt, history, personaPrompt, selectedModel)) {
+      yielded = true;
+      yield chunk;
+    }
+    if (yielded) return;
+  }
+
+  // 3. Groq LPUs Provider
+  if (selectedProvider === 'groq' || (selectedModel && (selectedModel.toLowerCase().includes('groq') || selectedModel.toLowerCase().includes('mixtral')))) {
+    let yielded = false;
+    for await (const chunk of streamGroqResponse(prompt, history, personaPrompt, selectedModel)) {
+      yielded = true;
+      yield chunk;
+    }
+    if (yielded) return;
+  }
+
+  // 4. Local LLM / Ollama Provider
   if (selectedProvider === 'ollama' || selectedProvider === 'local' || isLocalLlmModel(selectedModel) || (hasLocalLlmKey() && !hasOpenAIKey() && !process.env.GEMINI_API_KEY)) {
     let yieldedFromLocal = false;
     for await (const chunk of streamLocalLlmResponse(prompt, history, personaPrompt, selectedModel)) {
@@ -197,7 +266,7 @@ export async function* streamAssistantResponse(
     }
   }
 
-  // 2. If OpenAI API Key is present or OpenAI provider is selected, stream from OpenAI first
+  // 5. OpenAI Provider
   if (hasOpenAIKey() || selectedProvider === 'openai' || (selectedModel && selectedModel.toLowerCase().includes('gpt'))) {
     const openAIModel = selectedModel && selectedModel.toLowerCase().includes('gpt') ? selectedModel : 'gpt-5-nano';
     let yieldedFromOpenAI = false;
