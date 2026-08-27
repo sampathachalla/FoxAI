@@ -31,6 +31,8 @@ Your characteristics:
 const CANDIDATE_MODELS = [
   'gpt-5-nano',
   'gpt-5-nano-2025-08-07',
+  'gpt-5-mini',
+  'gpt-5',
   'gpt-4o-mini',
   'gpt-4o',
   'gpt-3.5-turbo',
