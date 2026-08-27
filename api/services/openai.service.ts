@@ -28,7 +28,13 @@ Your characteristics:
 4. When relevant, you can execute structured actions using tool declarations or markdown cards.
 `;
 
-const CANDIDATE_MODELS = ['gpt-5-nano', 'gpt-4o-mini', 'gpt-4o', 'gpt-3.5-turbo'];
+const CANDIDATE_MODELS = [
+  'gpt-5-nano',
+  'gpt-5-nano-2025-08-07',
+  'gpt-4o-mini',
+  'gpt-4o',
+  'gpt-3.5-turbo',
+];
 
 export async function generateOpenAIResponse(
   prompt: string,
