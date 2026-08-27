@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { generateAssistantResponse, streamAssistantResponse } from '../services/gemini.service';
 import { hasOpenAIKey } from '../services/openai.service';
+import { hasLocalLlmKey, getLocalLlmBaseUrl, AVAILABLE_LOCAL_MODELS } from '../services/localLlm.service';
 import {
   synthesizeDeepgramSpeech,
   hasDeepgramKey,
@@ -173,11 +174,14 @@ export async function handleGetDeepgramVoices(req: Request, res: Response): Prom
 export async function handleSystemStatus(req: Request, res: Response): Promise<void> {
   const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
   const hasOAIKey = hasOpenAIKey();
+  const hasLocalKey = hasLocalLlmKey();
   const hasDGKey = hasDeepgramKey();
   
   let engineName = 'Local Intelligence Kernel';
   if (hasOAIKey) {
     engineName = 'GPT-5 Nano (OpenAI) + Deepgram Aura';
+  } else if (hasLocalKey) {
+    engineName = 'Custom Local LLM (Ollama) + Deepgram Aura';
   } else if (hasGeminiKey) {
     engineName = 'Gemini 2.0 Flash + Deepgram Aura';
   }
@@ -187,13 +191,16 @@ export async function handleSystemStatus(req: Request, res: Response): Promise<v
     assistantName: 'Fox',
     version: '2.0-Intelligence',
     engine: engineName,
-    hasApiKey: hasOAIKey || hasGeminiKey,
+    hasApiKey: hasOAIKey || hasGeminiKey || hasLocalKey,
     hasOpenAIKey: hasOAIKey,
     hasGeminiKey: hasGeminiKey,
+    hasLocalLlmKey: hasLocalKey,
     hasDeepgramKey: hasDGKey,
+    localLlmBaseUrl: getLocalLlmBaseUrl(),
+    localModels: AVAILABLE_LOCAL_MODELS,
     deepgramModel: 'aura-2-asteria-en',
-    defaultModel: hasOAIKey ? 'gpt-5-nano' : 'gemini-2.0-flash',
-    supportedModals: ['text', 'voice', 'deepgram-tts', 'audio-reactive', 'system-tools'],
+    defaultModel: hasOAIKey ? 'gpt-5-nano' : hasLocalKey ? 'qwen2.5:0.5b' : 'gemini-2.0-flash',
+    supportedModals: ['text', 'voice', 'deepgram-tts', 'audio-reactive', 'system-tools', 'local-llm'],
   });
 }
 

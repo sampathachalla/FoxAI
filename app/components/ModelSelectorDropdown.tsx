@@ -74,7 +74,7 @@ export const ModelSelectorDropdown: React.FC<ModelSelectorDropdownProps> = ({
   const handleSelectModel = (model: AIModelOption) => {
     setEnginePrefs({
       ...enginePrefs,
-      model: model.name,
+      model: model.id,
       provider: model.providerId,
     });
 
@@ -98,7 +98,7 @@ export const ModelSelectorDropdown: React.FC<ModelSelectorDropdownProps> = ({
       const defaultModel = prov.models.find((m) => m.isPopular) || prov.models[0];
       setEnginePrefs({
         ...enginePrefs,
-        model: defaultModel.name,
+        model: defaultModel.id,
         provider: prov.id,
       });
       if (deviceSettings.soundEffects) {

@@ -5,6 +5,12 @@ import {
   streamOpenAIResponse,
   hasOpenAIKey,
 } from './openai.service';
+import {
+  generateLocalLlmResponse,
+  streamLocalLlmResponse,
+  hasLocalLlmKey,
+  isLocalLlmModel,
+} from './localLlm.service';
 import { detectToolsFromPromptAndResponse } from '../utils/toolDetection';
 
 let genAIClient: GoogleGenAI | null = null;
@@ -59,7 +65,15 @@ export async function generateAssistantResponse(
   sources?: { title: string; url: string }[];
   isQuotaFallback?: boolean;
 }> {
-  // 1. If OpenAI API Key is present or OpenAI provider is selected, call OpenAI / GPT-5 Nano first
+  // 1. If Local LLM / Ollama provider is selected or a local model is chosen or Local LLM key is configured
+  if (selectedProvider === 'ollama' || selectedProvider === 'local' || isLocalLlmModel(selectedModel) || (hasLocalLlmKey() && !hasOpenAIKey() && !process.env.GEMINI_API_KEY)) {
+    const localResult = await generateLocalLlmResponse(prompt, history, personaPrompt, selectedModel);
+    if (localResult && localResult.text) {
+      return localResult;
+    }
+  }
+
+  // 2. If OpenAI API Key is present or OpenAI provider is selected, call OpenAI / GPT-5 Nano first
   if (hasOpenAIKey() || selectedProvider === 'openai' || (selectedModel && selectedModel.toLowerCase().includes('gpt'))) {
     const openAIModel = selectedModel && selectedModel.toLowerCase().includes('gpt') ? selectedModel : 'gpt-5-nano';
     const openAIResult = await generateOpenAIResponse(prompt, history, personaPrompt, openAIModel);
@@ -171,7 +185,19 @@ export async function* streamAssistantResponse(
   selectedModel?: string,
   selectedProvider?: string
 ): AsyncGenerator<string, void, unknown> {
-  // 1. If OpenAI API Key is present or OpenAI provider is selected, stream from OpenAI first
+  // 1. If Local LLM / Ollama provider is selected or a local model is chosen or Local LLM key is configured
+  if (selectedProvider === 'ollama' || selectedProvider === 'local' || isLocalLlmModel(selectedModel) || (hasLocalLlmKey() && !hasOpenAIKey() && !process.env.GEMINI_API_KEY)) {
+    let yieldedFromLocal = false;
+    for await (const chunk of streamLocalLlmResponse(prompt, history, personaPrompt, selectedModel)) {
+      yieldedFromLocal = true;
+      yield chunk;
+    }
+    if (yieldedFromLocal) {
+      return;
+    }
+  }
+
+  // 2. If OpenAI API Key is present or OpenAI provider is selected, stream from OpenAI first
   if (hasOpenAIKey() || selectedProvider === 'openai' || (selectedModel && selectedModel.toLowerCase().includes('gpt'))) {
     const openAIModel = selectedModel && selectedModel.toLowerCase().includes('gpt') ? selectedModel : 'gpt-5-nano';
     let yieldedFromOpenAI = false;
