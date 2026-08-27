@@ -148,10 +148,15 @@ export async function synthesizeDeepgramSpeech(
     throw new Error('Deepgram API key is not configured in environment secrets.');
   }
 
-  // Clean markdown syntax or URLs from text before speaking
+  // Clean text for speech: strip code blocks, HTML, markdown symbols, and URLs
   const cleanText = text
-    .replace(/[*_~`#\[\]\(\)>]/g, '')
-    .replace(/https?:\/\/\S+/g, 'link')
+    .replace(/```[\s\S]*?```/g, 'code block')   // strip fenced code blocks
+    .replace(/`[^`]*`/g, '')                     // strip inline code
+    .replace(/<[^>]+>/g, '')                     // strip HTML tags
+    .replace(/\$\$[\s\S]*?\$\$/g, 'math formula') // strip display LaTeX
+    .replace(/\$[^$\n]+\$/g, 'math formula')     // strip inline LaTeX
+    .replace(/https?:\/\/\S+/g, 'link')          // replace URLs
+    .replace(/[*_~`#\[\]()>|\\^]/g, '')         // strip markdown punctuation
     .replace(/\s+/g, ' ')
     .trim();
 

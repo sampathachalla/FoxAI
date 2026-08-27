@@ -177,9 +177,9 @@ export async function handleSystemStatus(req: Request, res: Response): Promise<v
   
   let engineName = 'Local Intelligence Kernel';
   if (hasOAIKey) {
-    engineName = 'GPT-5 Nano (OpenAI) + Deepgram Aura';
+    engineName = 'GPT-4o-mini (OpenAI) + Deepgram Aura';
   } else if (hasGeminiKey) {
-    engineName = 'Gemini 3.7 Flash + Deepgram Aura';
+    engineName = 'Gemini 2.0 Flash + Deepgram Aura';
   }
 
   res.json({
@@ -192,7 +192,7 @@ export async function handleSystemStatus(req: Request, res: Response): Promise<v
     hasGeminiKey: hasGeminiKey,
     hasDeepgramKey: hasDGKey,
     deepgramModel: 'aura-2-asteria-en',
-    defaultModel: hasOAIKey ? 'gpt-5-nano' : 'gemini-3.7-flash',
+    defaultModel: hasOAIKey ? 'gpt-4o-mini' : 'gemini-2.0-flash',
     supportedModals: ['text', 'voice', 'deepgram-tts', 'audio-reactive', 'system-tools'],
   });
 }
@@ -245,10 +245,12 @@ export async function handleHermesAgent(req: Request, res: Response): Promise<vo
       return;
     }
 
-    const agentHistory = Array.isArray(history)
-      ? history.map((h: any) => ({
+    const agentHistory: ChatMessage[] = Array.isArray(history)
+      ? history.map((h: any, i: number) => ({
+          id: h.id || `h_${i}`,
           role: h.role === 'user' ? 'user' : 'assistant',
-          content: h.content,
+          content: h.content || '',
+          timestamp: h.timestamp || Date.now(),
         }))
       : [];
 

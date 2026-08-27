@@ -5,6 +5,7 @@ import {
   streamOpenAIResponse,
   hasOpenAIKey,
 } from './openai.service';
+import { detectToolsFromPromptAndResponse } from '../utils/toolDetection';
 
 let genAIClient: GoogleGenAI | null = null;
 
@@ -37,9 +38,9 @@ Your characteristics:
 `;
 
 const CANDIDATE_MODELS = [
-  'gemini-3.7-flash',
-  'gemini-3.1-flash-lite',
-  'gemini-flash-latest',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+  'gemini-1.5-flash-latest',
 ];
 
 async function sleep(ms: number) {
@@ -60,7 +61,7 @@ export async function generateAssistantResponse(
 }> {
   // 1. If OpenAI API Key is present or OpenAI provider is selected, call OpenAI / GPT-5 Nano first
   if (hasOpenAIKey() || selectedProvider === 'openai' || (selectedModel && selectedModel.toLowerCase().includes('gpt'))) {
-    const openAIModel = selectedModel && selectedModel.toLowerCase().includes('gpt') ? selectedModel : 'gpt-5-nano';
+    const openAIModel = selectedModel && selectedModel.toLowerCase().includes('gpt') ? selectedModel : 'gpt-4o-mini';
     const openAIResult = await generateOpenAIResponse(prompt, history, personaPrompt, openAIModel);
     if (openAIResult && openAIResult.text) {
       return openAIResult;
@@ -170,9 +171,9 @@ export async function* streamAssistantResponse(
   selectedModel?: string,
   selectedProvider?: string
 ): AsyncGenerator<string, void, unknown> {
-  // 1. If OpenAI API Key is present or OpenAI provider is selected, stream from OpenAI / GPT-5 Nano first
+  // 1. If OpenAI API Key is present or OpenAI provider is selected, stream from OpenAI first
   if (hasOpenAIKey() || selectedProvider === 'openai' || (selectedModel && selectedModel.toLowerCase().includes('gpt'))) {
-    const openAIModel = selectedModel && selectedModel.toLowerCase().includes('gpt') ? selectedModel : 'gpt-5-nano';
+    const openAIModel = selectedModel && selectedModel.toLowerCase().includes('gpt') ? selectedModel : 'gpt-4o-mini';
     let yieldedFromOpenAI = false;
     for await (const chunk of streamOpenAIResponse(prompt, history, personaPrompt, openAIModel)) {
       yieldedFromOpenAI = true;
@@ -252,103 +253,7 @@ export async function* streamAssistantResponse(
   }
 }
 
-function detectToolsFromPromptAndResponse(prompt: string, responseText: string): AssistantToolCall[] {
-  const tools: AssistantToolCall[] = [];
-  const lowerPrompt = prompt.toLowerCase();
 
-  // Reminder intent
-  if (
-    lowerPrompt.includes('remind me') ||
-    lowerPrompt.includes('set a reminder') ||
-    lowerPrompt.includes('create reminder')
-  ) {
-    const cleanTitle = prompt
-      .replace(/remind me to |set a reminder to |create a reminder for |remind me /i, '')
-      .trim();
-    tools.push({
-      id: 'rem_' + Date.now(),
-      tool: 'reminder',
-      parameters: {
-        title: cleanTitle || 'Scheduled Task',
-        dueTime: 'Today at 5:00 PM',
-        priority: 'high',
-      },
-      status: 'completed',
-    });
-  }
-
-  // Note intent
-  if (
-    lowerPrompt.includes('take a note') ||
-    lowerPrompt.includes('note down') ||
-    lowerPrompt.includes('create note') ||
-    lowerPrompt.includes('write note')
-  ) {
-    const cleanContent = prompt
-      .replace(/take a note that |take a note: |note down: |create a note: |write a note: /i, '')
-      .trim();
-    tools.push({
-      id: 'note_' + Date.now(),
-      tool: 'note',
-      parameters: {
-        title: (cleanContent.slice(0, 30) || 'Quick Note') + '...',
-        content: cleanContent || responseText,
-        tags: ['Voice Note', 'Fox'],
-      },
-      status: 'completed',
-    });
-  }
-
-  // Weather intent
-  if (
-    lowerPrompt.includes('weather') ||
-    lowerPrompt.includes('temperature') ||
-    lowerPrompt.includes('rain') ||
-    lowerPrompt.includes('forecast')
-  ) {
-    tools.push({
-      id: 'wx_' + Date.now(),
-      tool: 'weather',
-      parameters: {
-        location: 'Current Location',
-        condition: 'Partly Cloudy',
-        temperature: '72°F',
-        humidity: '48%',
-        high: '76°F',
-        low: '58°F',
-      },
-      status: 'completed',
-    });
-  }
-
-  // Device control intent
-  if (
-    lowerPrompt.includes('focus mode') ||
-    lowerPrompt.includes('do not disturb') ||
-    lowerPrompt.includes('flashlight') ||
-    lowerPrompt.includes('dark mode')
-  ) {
-    let setting = 'Focus Mode';
-    if (lowerPrompt.includes('flashlight')) setting = 'Flashlight';
-    if (lowerPrompt.includes('dark mode')) setting = 'Appearance';
-    if (lowerPrompt.includes('do not disturb')) setting = 'Do Not Disturb';
-
-    tools.push({
-      id: 'dev_' + Date.now(),
-      tool: 'device_control',
-      parameters: {
-        setting,
-        action:
-          lowerPrompt.includes('off') || lowerPrompt.includes('disable')
-            ? 'disabled'
-            : 'enabled',
-      },
-      status: 'completed',
-    });
-  }
-
-  return tools;
-}
 
 function getLocalAssistantFallback(
   prompt: string,

@@ -6,9 +6,18 @@ async function startServer() {
   const app = express();
   const PORT = process.env.PORT || 3001;
 
-  // CORS middleware for standalone frontend integration
+  // CORS middleware — wildcard in dev, restricted to ALLOWED_ORIGINS in production
+  const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+    : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
   app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
+    const origin = req.headers.origin || '';
+    const isDev = process.env.NODE_ENV !== 'production';
+
+    if (isDev || allowedOrigins.includes(origin)) {
+      res.header('Access-Control-Allow-Origin', isDev ? '*' : origin);
+    }
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     if (req.method === 'OPTIONS') {
@@ -33,7 +42,7 @@ async function startServer() {
   // Assistant REST API endpoints
   app.use('/api/assistant', assistantRoutes);
 
-  app.listen(PORT, '0.0.0.0', () => {
+  app.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`[Fox API Server] Running at http://localhost:${PORT}`);
   });
 }

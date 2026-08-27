@@ -6,6 +6,11 @@ export interface HermesPythonRunResult {
     steps?: any[];
     toolsExecuted?: any[];
     durationMs?: number;
+    tokens?: {
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+    };
   };
 }
 

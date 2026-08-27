@@ -1,4 +1,20 @@
 services:
+  # Python FastAPI Hermes Agent Microservice (port 8000)
+  python-agent:
+    build:
+      context: ./api/agent
+      dockerfile: Dockerfile
+    container_name: fox-python-agent
+    ports:
+      - "8000:8000"
+    environment:
+      - FASTAPI_PORT=8000
+    env_file:
+      - path: ./api/.env
+        required: false
+    restart: unless-stopped
+
+  # Node.js / Express API server (port 3001)
   api:
     build:
       context: ./api
@@ -9,10 +25,30 @@ services:
     environment:
       - PORT=3001
       - NODE_ENV=development
+      - HERMES_FASTAPI_URL=http://python-agent:8000
     env_file:
       - path: ./api/.env
         required: false
     volumes:
       - ./api:/app
       - /app/node_modules
+    depends_on:
+      - python-agent
+    restart: unless-stopped
+
+  # React / Vite frontend (port 3000)
+  app:
+    image: node:22-alpine
+    container_name: fox-jarvis-app
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host"
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:3001
+    volumes:
+      - ./app:/app
+      - /app/node_modules
+    depends_on:
+      - api
     restart: unless-stopped
