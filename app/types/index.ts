@@ -149,3 +149,66 @@ export interface VoiceTelemetry {
   sttSessionCount: number;
   lastUpdated: number;
 }
+
+export type CoreShapeId = 'sphere' | 'torus' | 'icosahedron' | 'helix' | 'tesseract';
+
+export interface CoreShapeConfig {
+  id: CoreShapeId;
+  name: string;
+  tagline: string;
+  description: string;
+  iconName: string;
+  particleCount: number;
+}
+
+export const CORE_SHAPES: CoreShapeConfig[] = [
+  {
+    id: 'sphere',
+    name: 'Holographic Sphere',
+    tagline: 'Harmonic Resonance Core',
+    description: 'Multi-tier holographic particle sphere with orbital HUD rings',
+    iconName: 'Orbit',
+    particleCount: 2400,
+  },
+  {
+    id: 'torus',
+    name: 'Quantum Torus',
+    tagline: 'Subatomic Flux Ring',
+    description: 'Pulsing donut ring of continuous particle streams and orbital rings',
+    iconName: 'Disc',
+    particleCount: 2400,
+  },
+  {
+    id: 'icosahedron',
+    name: 'Cyber Icosahedron',
+    tagline: 'Holographic Crystal Lattice',
+    description: 'Geometric crystal polyhedron with glowing vertices and rotating facet edges',
+    iconName: 'Hexagon',
+    particleCount: 2400,
+  },
+  {
+    id: 'helix',
+    name: 'Neural DNA Helix',
+    tagline: 'Biomimetic Neural Wave',
+    description: 'Dual braided particle waves undulating and twisting in 3D space with base pair rungs',
+    iconName: 'Dna',
+    particleCount: 2400,
+  },
+  {
+    id: 'tesseract',
+    name: 'Hypercube Tesseract',
+    tagline: '4D Dimensional Matrix',
+    description: '4D-to-3D perspective projection of rotating nested cube lattices',
+    iconName: 'Box',
+    particleCount: 2400,
+  },
+];
+
+export const CORE_SHAPE_CONFIGS: Record<CoreShapeId, CoreShapeConfig> = {
+  sphere: CORE_SHAPES[0],
+  torus: CORE_SHAPES[1],
+  icosahedron: CORE_SHAPES[2],
+  helix: CORE_SHAPES[3],
+  tesseract: CORE_SHAPES[4],
+};
+

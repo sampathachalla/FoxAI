@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
 import { ACCENT_THEMES } from '../utils/formatters';
-import { SettingsTab, EnginePreferences, HeaderQuickOptionId } from '../types';
+import { SettingsTab, EnginePreferences, HeaderQuickOptionId, CoreShapeId, CORE_SHAPES } from '../types';
 import { ALL_QUICK_OPTIONS } from './QuickAccessPanel';
 import { ModelSelectorDropdown } from './ModelSelectorDropdown';
 import { SoundFXService } from '../utils/audio';
@@ -32,12 +32,37 @@ import {
   Clock,
   ChevronRight,
   Info,
+  Orbit,
+  Disc,
+  Hexagon,
+  Dna,
+  Box,
+  Boxes,
+  CircleDot,
 } from 'lucide-react';
+
+const SHAPE_ICONS: Record<CoreShapeId, React.ElementType> = {
+  sphere: Orbit,
+  torus: Disc,
+  icosahedron: Hexagon,
+  helix: Dna,
+  tesseract: Boxes,
+};
+
+const SHAPE_BADGES: Record<CoreShapeId, { type: string; motion: string }> = {
+  sphere: { type: 'Orbital HUD', motion: 'Harmonic Pulse' },
+  torus: { type: 'Quantum Toroid', motion: 'Dual-Axis Vortex' },
+  icosahedron: { type: 'Crystal Polyhedron', motion: 'Facet Lattice' },
+  helix: { type: 'Dual Strand Wave', motion: 'Biomimetic Twist' },
+  tesseract: { type: '4D Hypercube Matrix', motion: '4D Perspective Projection' },
+};
 
 export const SettingsView: React.FC = () => {
   const {
     accentTheme,
     setAccentTheme,
+    coreShape,
+    setCoreShape,
     voicePrefs,
     setVoicePrefs,
     availableVoices,
@@ -329,6 +354,160 @@ export const SettingsView: React.FC = () => {
                           <span className="opacity-60">{theme.secondary}</span>
                         </div>
                       </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 3D Intelligence Core Shape Selector */}
+              <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <Boxes className="w-4 h-4 text-cyan-400" style={{ color: accentTheme.primary }} />
+                      <h2 className="text-sm font-semibold text-white tracking-tight">
+                        3D Intelligence Core Shape
+                      </h2>
+                    </div>
+                    <p className="text-xs text-neutral-400">
+                      Select the procedural holographic geometry rendered in the neural voice stage.
+                    </p>
+                  </div>
+                  <div className="flex items-center space-x-2 self-start sm:self-auto">
+                    <span
+                      className="text-xs font-mono font-medium px-2.5 py-1 rounded-lg border border-white/10 flex items-center space-x-1.5"
+                      style={{ color: accentTheme.primary, backgroundColor: 'rgba(0,0,0,0.5)' }}
+                    >
+                      <span
+                        className="w-1.5 h-1.5 rounded-full animate-pulse"
+                        style={{ backgroundColor: accentTheme.primary }}
+                      />
+                      <span>Active: {CORE_SHAPES.find((s) => s.id === (coreShape || 'sphere'))?.name || 'Holographic Sphere'}</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* 5 Core Shapes Visual Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                  {CORE_SHAPES.map((shape) => {
+                    const isSelected = (coreShape || 'sphere') === shape.id;
+                    const ShapeIcon = SHAPE_ICONS[shape.id] || Orbit;
+                    const badgeInfo = SHAPE_BADGES[shape.id] || { type: '3D Geometry', motion: 'Audio Reactive' };
+
+                    return (
+                      <button
+                        type="button"
+                        key={shape.id}
+                        onClick={() => {
+                          if (deviceSettings.soundEffects) {
+                            SoundFXService.getInstance().playChime('click');
+                          }
+                          setCoreShape(shape.id);
+                        }}
+                        className={`p-4 rounded-2xl border transition-all duration-200 cursor-pointer flex flex-col justify-between gap-3 text-left relative overflow-hidden group ${
+                          isSelected
+                            ? 'bg-white/[0.12] border-white/40 shadow-xl ring-1 ring-white/20'
+                            : 'bg-white/[0.03] hover:bg-white/[0.07] border-white/[0.08] hover:border-white/20 hover:scale-[1.01]'
+                        }`}
+                        style={
+                          isSelected
+                            ? {
+                                boxShadow: `0 0 24px ${accentTheme.glow}`,
+                                borderColor: `${accentTheme.primary}80`,
+                              }
+                            : undefined
+                        }
+                      >
+                        {/* Background Sheen on Selected / Hover */}
+                        <div
+                          className="absolute -right-8 -top-8 w-28 h-28 rounded-full blur-2xl pointer-events-none transition-opacity duration-300 opacity-0 group-hover:opacity-30"
+                          style={{ backgroundColor: accentTheme.primary }}
+                        />
+                        {isSelected && (
+                          <div
+                            className="absolute -right-8 -top-8 w-28 h-28 rounded-full blur-2xl pointer-events-none opacity-50"
+                            style={{ backgroundColor: accentTheme.primary }}
+                          />
+                        )}
+
+                        {/* Top Row: Icon, Titles & Active Indicator */}
+                        <div className="flex items-start justify-between gap-2 relative z-10 w-full">
+                          <div className="flex items-center space-x-3 min-w-0">
+                            <div
+                              className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-all duration-300 group-hover:scale-105"
+                              style={{
+                                background: isSelected
+                                  ? `linear-gradient(135deg, ${accentTheme.primary}35, ${accentTheme.secondary}35)`
+                                  : 'rgba(255,255,255,0.06)',
+                                border: isSelected
+                                  ? `1px solid ${accentTheme.primary}80`
+                                  : '1px solid rgba(255,255,255,0.1)',
+                                color: isSelected ? '#ffffff' : accentTheme.primary,
+                              }}
+                            >
+                              <ShapeIcon className="w-5 h-5 transition-transform duration-300 group-hover:rotate-6" />
+                            </div>
+                            <div className="min-w-0">
+                              <h3 className="text-xs font-bold text-white truncate tracking-tight">
+                                {shape.name}
+                              </h3>
+                              <p className="text-[10px] text-neutral-400 font-mono truncate">{shape.tagline}</p>
+                            </div>
+                          </div>
+
+                          {/* Selection Status Badge */}
+                          {isSelected ? (
+                            <div className="flex items-center space-x-1.5 shrink-0">
+                              <span
+                                className="text-[9px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded-full flex items-center space-x-1"
+                                style={{
+                                  backgroundColor: `${accentTheme.primary}25`,
+                                  color: accentTheme.primary,
+                                  border: `1px solid ${accentTheme.primary}50`,
+                                }}
+                              >
+                                <span
+                                  className="w-1.5 h-1.5 rounded-full animate-pulse"
+                                  style={{ backgroundColor: accentTheme.primary }}
+                                />
+                                <span>ACTIVE</span>
+                              </span>
+                              <div
+                                className="w-5 h-5 rounded-full flex items-center justify-center text-black font-bold shrink-0 shadow-sm"
+                                style={{ backgroundColor: accentTheme.primary }}
+                              >
+                                <Check className="w-3 h-3 text-black stroke-[3]" />
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] font-medium text-neutral-500 group-hover:text-neutral-300 transition-colors opacity-0 group-hover:opacity-100 shrink-0">
+                              Select
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Description */}
+                        <p className="text-[11px] text-neutral-300 leading-relaxed relative z-10 line-clamp-2">
+                          {shape.description}
+                        </p>
+
+                        {/* Badges / Specs Footer */}
+                        <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between gap-2 relative z-10 w-full text-[10px]">
+                          <div className="flex items-center space-x-1.5">
+                            <span className="px-2 py-0.5 rounded-md bg-white/[0.05] border border-white/[0.08] text-neutral-400 font-mono text-[9px] flex items-center space-x-1">
+                              <Sparkles className="w-2.5 h-2.5" style={{ color: accentTheme.primary }} />
+                              <span>{shape.particleCount.toLocaleString()} pts</span>
+                            </span>
+                            <span className="px-2 py-0.5 rounded-md bg-white/[0.05] border border-white/[0.08] text-neutral-400 text-[9px] truncate">
+                              {badgeInfo.type}
+                            </span>
+                          </div>
+
+                          <span className="text-neutral-500 font-mono text-[9px] truncate">
+                            {badgeInfo.motion}
+                          </span>
+                        </div>
+                      </button>
                     );
                   })}
                 </div>

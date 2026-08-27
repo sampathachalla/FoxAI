@@ -13,16 +13,18 @@ import {
   HeaderQuickOptionId,
   EngineTelemetry,
   VoiceTelemetry,
+  CoreShapeId,
 } from '../types';
 import { ACCENT_THEMES } from '../utils/formatters';
 
-const STORAGE_KEYS = {
+export const STORAGE_KEYS = {
   SESSIONS: 'fox_sessions_v3',
   ACTIVE_SESSION: 'fox_active_session_v3',
   MESSAGES: 'fox_messages_v1',
   REMINDERS: 'fox_reminders_v1',
   NOTES: 'fox_notes_v1',
   THEME: 'fox_accent_theme_v1',
+  CORE_SHAPE: 'fox_core_shape_preference',
   VOICE: 'fox_voice_pref_v1',
   DEVICE: 'fox_device_settings_v1',
   PROMPT_LIBRARY: 'fox_prompt_library_v1',
@@ -296,6 +298,28 @@ export const StorageService = {
   saveTheme(theme: AccentTheme) {
     try {
       localStorage.setItem(STORAGE_KEYS.THEME, theme.id);
+    } catch (e) {}
+  },
+
+  loadCoreShape(fallback: CoreShapeId = 'sphere'): CoreShapeId {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.CORE_SHAPE);
+      if (
+        saved === 'sphere' ||
+        saved === 'torus' ||
+        saved === 'icosahedron' ||
+        saved === 'helix' ||
+        saved === 'tesseract'
+      ) {
+        return saved;
+      }
+    } catch (e) {}
+    return fallback;
+  },
+
+  saveCoreShape(shape: CoreShapeId): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.CORE_SHAPE, shape);
     } catch (e) {}
   },
 

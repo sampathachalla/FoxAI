@@ -1,15 +1,30 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
 import { SoundFXService } from '../utils/audio';
+import { CoreShapeId, AssistantStatus, AccentTheme } from '../types';
 
-interface Particle {
-  theta: number; // Longitude: 0 to 2*PI
-  phi: number;   // Latitude: -PI/2 to PI/2
-  row: number;
-  col: number;
-  seed: number;
-  tier: number;  // 0, 1, 2: Central Sphere, 3: Inner Orbital Ring, 4: Outer HUD Ring
-  ringRadius: number;
+interface Point3D {
+  x: number;
+  y: number;
+  z: number;
+  tier?: number;
+  ringRadius?: number;
+  size?: number;
+  colorType?: 'primary' | 'secondary' | 'white' | 'accent';
+  alpha?: number;
+}
+
+interface ProjectedPoint {
+  x: number;
+  y: number;
+  z: number;
+  scale: number;
+  color: string;
+  glowColor: string;
+  size: number;
+  alpha: number;
+  tier: number;
+  isLaserPulse?: boolean;
 }
 
 interface HoloPulse {
@@ -20,15 +35,15 @@ interface HoloPulse {
   colorType: 'primary' | 'secondary' | 'white';
 }
 
-// Utility to parse hex colors to RGB components
-function hexToRgb(hex: string): { r: number; g: number; b: number } {
+// Utility to parse hex colors to RGB components with safe fallbacks
+export function hexToRgb(hex: string): { r: number; g: number; b: number } {
   let clean = (hex || '#99FFFF').replace('#', '');
   if (clean.length === 3) {
     clean = clean.split('').map((c) => c + c).join('');
   }
   const num = parseInt(clean, 16);
   if (isNaN(num)) {
-    return { r: 153, g: 255, b: 255 }; // Safe default #99FFFF
+    return { r: 153, g: 255, b: 255 }; // Safe default Fox Cyan #99FFFF
   }
   return {
     r: (num >> 16) & 255,
@@ -37,27 +52,474 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
   };
 }
 
+// --- Procedural Geometry Algorithms ---
+
+// 1. Holographic Sphere Core (2,400 vertices)
+function generateSpherePoints(
+  time: number,
+  status: AssistantStatus,
+  audioLevel: number,
+  morphProgress: number
+): Point3D[] {
+  const NUM_ROWS = 40;
+  const NUM_COLS = 60;
+  const baseSphereRadius = 148;
+  const particles: Point3D[] = [];
+
+  const isSpeaking = status === 'speaking';
+  const isListening = status === 'listening';
+
+  const vocalCadence = isSpeaking
+    ? 0.70 + Math.sin(time * 2.8) * 0.22 + Math.cos(time * 4.6) * 0.18 + audioLevel * 0.45
+    : isListening
+    ? 0.40 + audioLevel * 0.65
+    : 0.06;
+
+  for (let r = 0; r < NUM_ROWS; r++) {
+    const phi = ((r + 0.5) / NUM_ROWS) * Math.PI - Math.PI / 2;
+    for (let c = 0; c < NUM_COLS; c++) {
+      const theta = (c / NUM_COLS) * Math.PI * 2;
+      const seed = Math.sin(r * 12.9898 + c * 78.233);
+      const index = r * NUM_COLS + c;
+
+      // 75% central sphere, 25% orbital rings in thinking mode
+      const tier = index % 5;
+      const ringRadius = tier === 3 ? 165 : tier === 4 ? 210 : 0;
+
+      let voiceSoundwave = 0;
+      if (isSpeaking) {
+        const waveCircumference = Math.sin(theta * 4.0 - time * 3.2) * (vocalCadence * 38.0);
+        const waveVertical = Math.cos(phi * 5.0 + time * 3.6) * (vocalCadence * 32.0);
+        const voiceBulge = Math.cos(phi) * Math.sin(time * 2.4 + theta) * (vocalCadence * 26.0);
+        const harmonicFlow = Math.sin(time * 4.8 + phi * 3.0 + theta * 2.0) * (vocalCadence * 14.0);
+        voiceSoundwave = waveCircumference + waveVertical + voiceBulge + harmonicFlow;
+      } else if (isListening) {
+        voiceSoundwave =
+          Math.sin(phi * 3.5 - time * 2.0) * (vocalCadence * 18.0) +
+          Math.cos(theta * 3.0 - time * 1.6) * (vocalCadence * 16.0);
+      } else {
+        voiceSoundwave = Math.sin(time * 1.6 + phi * 1.5 + theta) * 4.2;
+      }
+
+      const rSph = Math.max(20, baseSphereRadius + voiceSoundwave);
+      const xSph = rSph * Math.cos(phi) * Math.sin(theta);
+      const ySph = rSph * Math.sin(phi);
+      const zSph = rSph * Math.cos(phi) * Math.cos(theta);
+
+      let jX = xSph;
+      let jY = ySph;
+      let jZ = zSph;
+
+      if (tier === 3) {
+        const spinSpeed = -time * 1.2;
+        const animatedTheta = theta + spinSpeed;
+        const rad = ringRadius + Math.sin(time * 3 + theta * 4) * 1.5;
+        const tilt = Math.PI * 0.28;
+        const rx = Math.cos(animatedTheta) * rad;
+        const rz = Math.sin(animatedTheta) * rad;
+        jX = rx;
+        jY = rz * Math.sin(tilt);
+        jZ = rz * Math.cos(tilt);
+      } else if (tier === 4) {
+        const spinSpeed = time * 0.8;
+        const animatedTheta = theta + spinSpeed;
+        const rad = ringRadius + Math.sin(time * 3 + theta * 4) * 2.0;
+        const tilt = -Math.PI * 0.32;
+        const rx = Math.cos(animatedTheta) * rad;
+        const rz = Math.sin(animatedTheta) * rad;
+        jX = rx * Math.cos(tilt);
+        jY = rx * Math.sin(tilt);
+        jZ = rz;
+      } else {
+        const breath = Math.sin(time * 2.5 + seed * 3) * (0.8 + morphProgress * 1.2);
+        jX = (baseSphereRadius + breath + voiceSoundwave) * Math.cos(phi) * Math.sin(theta);
+        jY = (baseSphereRadius + breath + voiceSoundwave) * Math.sin(phi);
+        jZ = (baseSphereRadius + breath + voiceSoundwave) * Math.cos(phi) * Math.cos(theta);
+      }
+
+      const easeMorph =
+        morphProgress < 0.5
+          ? 2 * morphProgress * morphProgress
+          : 1 - Math.pow(-2 * morphProgress + 2, 2) / 2;
+
+      particles.push({
+        x: xSph * (1 - easeMorph) + jX * easeMorph,
+        y: ySph * (1 - easeMorph) + jY * easeMorph,
+        z: zSph * (1 - easeMorph) + jZ * easeMorph,
+        tier,
+        ringRadius,
+      });
+    }
+  }
+
+  return particles;
+}
+
+// 2. Quantum Torus Geometry (2,408 vertices)
+function generateTorusPoints(
+  time: number,
+  status: AssistantStatus,
+  audioLevel: number,
+  bassEnergy: number = 0
+): Point3D[] {
+  const N_TOROIDAL = 64;
+  const N_POLOIDAL = 32;
+  const particles: Point3D[] = [];
+
+  const isSpeaking = status === 'speaking';
+  const isListening = status === 'listening';
+  const effectiveAudio = Math.max(audioLevel, bassEnergy);
+  const vocalCadence = isSpeaking
+    ? 0.7 + effectiveAudio * 0.45
+    : isListening
+    ? 0.4 + effectiveAudio * 0.3
+    : 0.08;
+
+  const baseMajorRadius = 135 * (1.0 + 0.22 * effectiveAudio + 0.05 * Math.sin(time * 2.2));
+  const baseMinorRadius = Math.max(20, 46 * (1.0 + 0.38 * effectiveAudio * Math.cos(time * 3.0)));
+
+  const swirlSpeed = status === 'thinking' || isSpeaking ? 4.2 : 1.6;
+
+  // Torus surface particles (64 * 32 = 2,048)
+  for (let u = 0; u < N_TOROIDAL; u++) {
+    const theta = (u / N_TOROIDAL) * Math.PI * 2;
+    for (let v = 0; v < N_POLOIDAL; v++) {
+      const phi0 = (v / N_POLOIDAL) * Math.PI * 2;
+      const phi = phi0 + swirlSpeed * time * 0.1 + 3 * theta;
+
+      const ripple = vocalCadence * (Math.sin(6 * theta - time * 4.5) * 16 + Math.cos(8 * phi + time * 3.2) * 10);
+      const rMinor = Math.max(15, baseMinorRadius + ripple);
+
+      const x = (baseMajorRadius + rMinor * Math.cos(phi)) * Math.cos(theta);
+      const y = rMinor * Math.sin(phi);
+      const z = (baseMajorRadius + rMinor * Math.cos(phi)) * Math.sin(theta);
+
+      particles.push({ x, y, z, tier: 0, size: 1.4 });
+    }
+  }
+
+  // Concentric Accretion Ring 1: Equatorial (200 particles)
+  const ACC1_COUNT = 200;
+  const R_ACC1 = 195;
+  for (let i = 0; i < ACC1_COUNT; i++) {
+    const angle = (i / ACC1_COUNT) * Math.PI * 2 - time * 1.2;
+    const r = R_ACC1 + Math.sin(time * 4 + angle * 5) * 3;
+    particles.push({
+      x: r * Math.cos(angle),
+      y: Math.sin(time * 2 + angle * 3) * 4,
+      z: r * Math.sin(angle),
+      tier: 3,
+      ringRadius: R_ACC1,
+      size: 1.45,
+    });
+  }
+
+  // Concentric Accretion Ring 2: Polar Orbit (160 particles)
+  const ACC2_COUNT = 160;
+  const R_ACC2 = 175;
+  const tilt = 62 * (Math.PI / 180);
+  for (let i = 0; i < ACC2_COUNT; i++) {
+    const angle = (i / ACC2_COUNT) * Math.PI * 2 + time * 0.9;
+    const rx = R_ACC2 * Math.cos(angle);
+    const rz = R_ACC2 * Math.sin(angle);
+    particles.push({
+      x: rx,
+      y: rz * Math.sin(tilt),
+      z: rz * Math.cos(tilt),
+      tier: 4,
+      ringRadius: R_ACC2,
+      size: 1.35,
+    });
+  }
+
+  return particles;
+}
+
+// 3. Cyber Icosahedron Geometry (1,680 elements)
+const PHI_GOLDEN = (1 + Math.sqrt(5)) / 2; // ~1.618034
+const ICO_EDGES: [number, number][] = [
+  [0, 1], [0, 5], [0, 7], [0, 10], [0, 11],
+  [1, 5], [1, 7], [1, 8], [1, 9],
+  [2, 3], [2, 4], [2, 6], [2, 10], [2, 11],
+  [3, 4], [3, 6], [3, 8], [3, 9],
+  [4, 5], [4, 9], [4, 11],
+  [5, 9], [5, 11],
+  [6, 7], [6, 8], [6, 10],
+  [7, 8], [7, 10],
+  [8, 9],
+  [10, 11],
+];
+
+function generateIcosahedronPoints(
+  time: number,
+  status: AssistantStatus,
+  audioLevel: number,
+  midEnergy: number = 0
+): { particles: Point3D[]; vertices: [number, number, number][]; edges: [number, number][] } {
+  const effectiveAudio = Math.max(audioLevel, midEnergy);
+  const R_ico = 138 * (1.0 + 0.28 * effectiveAudio * (1.0 + 0.25 * Math.sin(time * 4)));
+  const K = R_ico / Math.sqrt(1 + PHI_GOLDEN * PHI_GOLDEN);
+
+  // 12 Base Vertices
+  const rawVertices: [number, number, number][] = [
+    [-K, PHI_GOLDEN * K, 0],
+    [K, PHI_GOLDEN * K, 0],
+    [-K, -PHI_GOLDEN * K, 0],
+    [K, -PHI_GOLDEN * K, 0],
+    [0, -K, PHI_GOLDEN * K],
+    [0, K, PHI_GOLDEN * K],
+    [0, -K, -PHI_GOLDEN * K],
+    [0, K, -PHI_GOLDEN * K],
+    [PHI_GOLDEN * K, 0, -K],
+    [PHI_GOLDEN * K, 0, K],
+    [-PHI_GOLDEN * K, 0, -K],
+    [-PHI_GOLDEN * K, 0, K],
+  ];
+
+  const particles: Point3D[] = [];
+
+  // 12 Glowing Vertex Nodes (tier 0)
+  rawVertices.forEach(([x, y, z]) => {
+    particles.push({ x, y, z, tier: 0, size: 4.5, colorType: 'white' });
+  });
+
+  // 30 Edges sampled into 16 discrete quantum dot particles each (480 particles, tier 1)
+  const DOTS_PER_EDGE = 16;
+  ICO_EDGES.forEach(([v1Idx, v2Idx]) => {
+    const v1 = rawVertices[v1Idx];
+    const v2 = rawVertices[v2Idx];
+    for (let s = 1; s <= DOTS_PER_EDGE; s++) {
+      const u = s / (DOTS_PER_EDGE + 1);
+      particles.push({
+        x: (1 - u) * v1[0] + u * v2[0],
+        y: (1 - u) * v1[1] + u * v2[1],
+        z: (1 - u) * v1[2] + u * v2[2],
+        tier: 1,
+        size: 1.6,
+      });
+    }
+  });
+
+  // Inner Concentric Counter-Rotating Crystalline Core (Radius ~65px, tier 2)
+  const innerK = (65 * (1.0 + 0.15 * effectiveAudio)) / Math.sqrt(1 + PHI_GOLDEN * PHI_GOLDEN);
+  const innerAngle = -time * 1.8;
+  const cosI = Math.cos(innerAngle);
+  const sinI = Math.sin(innerAngle);
+
+  rawVertices.forEach(([x0, y0, z0]) => {
+    const ratio = innerK / K;
+    const ix0 = x0 * ratio;
+    const iy0 = y0 * ratio;
+    const iz0 = z0 * ratio;
+
+    // Rotate inner crystal around Y-axis
+    const ix1 = ix0 * cosI - iz0 * sinI;
+    const iz1 = ix0 * sinI + iz0 * cosI;
+
+    particles.push({ x: ix1, y: iy0, z: iz1, tier: 2, size: 2.2, colorType: 'secondary' });
+  });
+
+  return { particles, vertices: rawVertices, edges: ICO_EDGES };
+}
+
+// 4. Neural DNA Helix Geometry (1,324 particles)
+function generateHelixPoints(
+  time: number,
+  status: AssistantStatus,
+  audioLevel: number,
+  bassEnergy: number = 0
+): { particles: Point3D[]; rungs: { pA: Point3D; pB: Point3D }[] } {
+  const effectiveAudio = Math.max(audioLevel, bassEnergy);
+  const L = 320;
+  const baseRadius = 76 * (1.0 + 0.35 * effectiveAudio * Math.sin(time * 3));
+  const pitch = (3 * 2 * Math.PI) / L; // 3 full turns along 320px
+  const rotationSpeed = status === 'speaking' ? 0.055 : status === 'thinking' ? 0.04 : 0.018;
+  const theta0 = time * rotationSpeed * 60;
+
+  const particles: Point3D[] = [];
+  const rungEndpoints: { pA: Point3D; pB: Point3D }[] = [];
+
+  // Dual Antiparallel Strands (400 particles each = 800 total, tier 0 & 1)
+  const STRAND_POINTS = 400;
+  for (let i = 0; i < STRAND_POINTS; i++) {
+    const s = -L / 2 + (i / (STRAND_POINTS - 1)) * L;
+    const angleA = pitch * s + theta0;
+    const angleB = pitch * s + Math.PI + theta0;
+
+    const rWave = baseRadius * (1.0 + 0.2 * effectiveAudio * Math.sin(3 * pitch * s - time * 4.2));
+
+    // Strand A
+    particles.push({
+      x: rWave * Math.cos(angleA),
+      y: s,
+      z: rWave * Math.sin(angleA),
+      tier: 0,
+      size: 1.5,
+    });
+
+    // Strand B
+    particles.push({
+      x: rWave * Math.cos(angleB),
+      y: s,
+      z: rWave * Math.sin(angleB),
+      tier: 1,
+      size: 1.5,
+      colorType: 'secondary',
+    });
+  }
+
+  // 28 Base-Pair Ladder Rungs (8 particles each = 224 total, tier 2)
+  const RUNGS = 28;
+  const NODES_PER_RUNG = 8;
+  for (let k = 0; k < RUNGS; k++) {
+    const s_k = -L / 2 + (k / (RUNGS - 1)) * L;
+    const angleA = pitch * s_k + theta0;
+    const angleB = pitch * s_k + Math.PI + theta0;
+
+    const pA: Point3D = { x: baseRadius * Math.cos(angleA), y: s_k, z: baseRadius * Math.sin(angleA) };
+    const pB: Point3D = { x: baseRadius * Math.cos(angleB), y: s_k, z: baseRadius * Math.sin(angleB) };
+    rungEndpoints.push({ pA, pB });
+
+    for (let m = 0; m < NODES_PER_RUNG; m++) {
+      const u = m / (NODES_PER_RUNG - 1);
+      const yOsc = Math.sin(Math.PI * u) * Math.sin(time * 6 + k * 0.4) * (18 * effectiveAudio);
+      particles.push({
+        x: (1 - u) * pA.x + u * pB.x,
+        y: (1 - u) * pA.y + u * pB.y + yOsc,
+        z: (1 - u) * pA.z + u * pB.z,
+        tier: 2,
+        size: 1.3,
+      });
+    }
+  }
+
+  // Synaptic Spark Cloud (300 particles, tier 3)
+  const SPARKS = 300;
+  for (let i = 0; i < SPARKS; i++) {
+    const s = -L / 2 + (Math.sin(i * 91.23 + time * 0.2) * 0.5 + 0.5) * L;
+    const sparkR = baseRadius * (1.2 + 0.5 * Math.abs(Math.sin(i * 47.11)));
+    const sparkAngle = (i * 0.38) + time * 0.5;
+    particles.push({
+      x: sparkR * Math.cos(sparkAngle),
+      y: s + Math.sin(time * 2 + i) * 10,
+      z: sparkR * Math.sin(sparkAngle),
+      tier: 3,
+      size: 1.2,
+      colorType: i % 2 === 0 ? 'white' : 'secondary',
+    });
+  }
+
+  return { particles, rungs: rungEndpoints };
+}
+
+// 5. Hypercube / Tesseract 4D-to-3D Geometry (1,536 elements)
+const TESSERACT_EDGES: [number, number][] = [];
+for (let i = 0; i < 16; i++) {
+  for (let bit = 0; bit < 4; bit++) {
+    const j = i ^ (1 << bit);
+    if (j > i) {
+      TESSERACT_EDGES.push([i, j]);
+    }
+  }
+}
+
+function generateTesseractPoints(
+  time: number,
+  status: AssistantStatus,
+  audioLevel: number,
+  midEnergy: number = 0
+): { particles: Point3D[]; projected3DVertices: [number, number, number][]; edges: [number, number][] } {
+  const effectiveAudio = Math.max(audioLevel, midEnergy);
+  const S0 = 95 * (1.0 + 0.32 * effectiveAudio);
+  const D4 = 2.4; // 4D Camera focal distance
+
+  const rotSpeedXW = status === 'speaking' ? 0.045 : 0.015;
+  const rotSpeedYZ = status === 'speaking' ? 0.035 : 0.012;
+
+  const thetaXW = time * rotSpeedXW * 60;
+  const thetaYZ = time * rotSpeedYZ * 60;
+
+  const cosXW = Math.cos(thetaXW);
+  const sinXW = Math.sin(thetaXW);
+  const cosYZ = Math.cos(thetaYZ);
+  const sinYZ = Math.sin(thetaYZ);
+
+  // 16 4D Vertices: (±S0, ±S0, ±S0, ±S0)
+  const vertices4D: [number, number, number, number][] = [];
+  for (let i = 0; i < 16; i++) {
+    const x = (i & 1 ? 1 : -1) * S0;
+    const y = (i & 2 ? 1 : -1) * S0;
+    const z = (i & 4 ? 1 : -1) * S0;
+    const w = (i & 8 ? 1 : -1) * S0;
+    vertices4D.push([x, y, z, w]);
+  }
+
+  // 4D Rotation + 4D-to-3D Perspective Projection
+  const projected3DVertices: [number, number, number][] = vertices4D.map(([x, y, z, w]) => {
+    // Rotate in XW plane
+    const x1 = x * cosXW - w * sinXW;
+    const w1 = x * sinXW + w * cosXW;
+
+    // Rotate in YZ plane
+    const y1 = y * cosYZ - z * sinYZ;
+    const z1 = y * sinYZ + z * cosYZ;
+
+    // 4D Perspective Projection with division-by-zero safeguard
+    const denominator = Math.max(0.25, D4 - w1 / S0);
+    const P4 = 1 / denominator;
+
+    return [x1 * P4, y1 * P4, z1 * P4];
+  });
+
+  const particles: Point3D[] = [];
+
+  // 16 Primary Hypercube Corner Nodes (tier 0)
+  projected3DVertices.forEach(([x, y, z]) => {
+    particles.push({ x, y, z, tier: 0, size: 4.0, colorType: 'white' });
+  });
+
+  // 32 Edges sampled into 12 quantum beam particles each (384 particles, tier 1)
+  const DOTS_PER_EDGE = 12;
+  TESSERACT_EDGES.forEach(([v1Idx, v2Idx]) => {
+    const v1 = projected3DVertices[v1Idx];
+    const v2 = projected3DVertices[v2Idx];
+    for (let s = 1; s <= DOTS_PER_EDGE; s++) {
+      const u = s / (DOTS_PER_EDGE + 1);
+      particles.push({
+        x: (1 - u) * v1[0] + u * v2[0],
+        y: (1 - u) * v1[1] + u * v2[1],
+        z: (1 - u) * v1[2] + u * v2[2],
+        tier: 1,
+        size: 1.5,
+      });
+    }
+  });
+
+  return { particles, projected3DVertices, edges: TESSERACT_EDGES };
+}
+
 export const FloatingOrb: React.FC = () => {
   const {
     status,
     audioLevel,
     frequencyData,
     accentTheme,
+    coreShape = 'sphere',
     toggleListening,
     currentTranscript,
     speakingTranscript,
-    messages,
     deviceSettings,
   } = useVoiceAssistant();
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const isVoiceActive = status === 'listening' || status === 'speaking';
 
-  // Mutable references for the animation frame loop
+  // Mutable references for the continuous 60fps animation frame loop
   const statusRef = useRef(status);
   const audioLevelRef = useRef(audioLevel);
   const frequencyDataRef = useRef(frequencyData);
   const accentThemeRef = useRef(accentTheme);
+  const coreShapeRef = useRef<CoreShapeId>(coreShape);
   const isVoiceActiveRef = useRef(isVoiceActive);
   const ambientGlowEnabledRef = useRef(deviceSettings.ambientGlow);
   const speakingTranscriptRef = useRef(speakingTranscript);
@@ -67,10 +529,11 @@ export const FloatingOrb: React.FC = () => {
     audioLevelRef.current = audioLevel;
     frequencyDataRef.current = frequencyData;
     accentThemeRef.current = accentTheme;
+    coreShapeRef.current = coreShape;
     isVoiceActiveRef.current = isVoiceActive;
     ambientGlowEnabledRef.current = deviceSettings.ambientGlow;
     speakingTranscriptRef.current = speakingTranscript;
-  }, [status, audioLevel, frequencyData, accentTheme, isVoiceActive, deviceSettings.ambientGlow, speakingTranscript]);
+  }, [status, audioLevel, frequencyData, accentTheme, coreShape, isVoiceActive, deviceSettings.ambientGlow, speakingTranscript]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -80,46 +543,18 @@ export const FloatingOrb: React.FC = () => {
 
     let animationId: number;
     let time = 0;
-    let wavePhase = 0;
-    let morphProgress = 0; // 0 = Pure Round Sphere, 1 = J.A.R.V.I.S. Orbital Rings around Central Sphere
+    let morphProgress = 0;
     let currentYaw = 0;
     let currentPitch = 0.10;
+    let velocityYaw = 0;
+    let velocityPitch = 0;
     let lastFrameTimestamp = performance.now();
 
-    // Continuous Fluid Physics & Smoothing Variables
+    // Continuous Physics & Smoothing Variables
     let smoothedSpeechEnergy = 0.10;
-    let smoothedWaveSpeed = 0.004;
     let smoothedAudioLevel = 0;
     let smoothedYawSpeed = 0.0020;
     let smoothedGlowAlpha = 0.25;
-
-    // --- Generate 3D Particles for Central Sphere & Orbital Rings ---
-    const NUM_ROWS = 40;
-    const NUM_COLS = 60;
-    const particles: Particle[] = [];
-
-    for (let r = 0; r < NUM_ROWS; r++) {
-      const phi = ((r + 0.5) / NUM_ROWS) * Math.PI - Math.PI / 2;
-      for (let c = 0; c < NUM_COLS; c++) {
-        const theta = (c / NUM_COLS) * Math.PI * 2;
-        const seed = Math.sin(r * 12.9898 + c * 78.233);
-        const index = r * NUM_COLS + c;
-
-        // Partition: 75% form the central sphere, 25% form orbital gimbal rings in thinking mode
-        const tier = index % 5;
-        const ringRadius = tier === 3 ? 165 : tier === 4 ? 210 : 0;
-
-        particles.push({
-          theta,
-          phi,
-          row: r,
-          col: c,
-          seed,
-          tier,
-          ringRadius,
-        });
-      }
-    }
 
     // Holographic Laser Pulses traveling around orbital rings
     const holoPulses: HoloPulse[] = Array.from({ length: 16 }, (_, i) => ({
@@ -130,25 +565,47 @@ export const FloatingOrb: React.FC = () => {
       colorType: i % 3 === 0 ? 'primary' : i % 3 === 1 ? 'white' : 'secondary',
     }));
 
-    // Mouse drag interaction
+    // Mouse drag 3D rotation & Momentum inertia tracking
     let isDragging = false;
     let lastMouseX = 0;
     let lastMouseY = 0;
+    let lastDragTimestamp = 0;
 
     const onMouseDown = (e: MouseEvent) => {
       isDragging = true;
       lastMouseX = e.clientX;
       lastMouseY = e.clientY;
+      lastDragTimestamp = performance.now();
+      velocityYaw = 0;
+      velocityPitch = 0;
     };
+
     const onMouseMove = (e: MouseEvent) => {
       if (!isDragging) return;
+      const now = performance.now();
+      const dtMouse = Math.max(1, now - lastDragTimestamp) / 1000;
       const dx = e.clientX - lastMouseX;
       const dy = e.clientY - lastMouseY;
+
       currentYaw += dx * 0.008;
       currentPitch += dy * 0.008;
+
+      // Safe pitch clamping
+      const maxPitch = Math.PI / 2 - 0.1;
+      const minPitch = -Math.PI / 2 + 0.1;
+      currentPitch = Math.max(minPitch, Math.min(maxPitch, currentPitch));
+
+      // Calculate instantaneous drag velocity (smoothed)
+      const instantVy = (dx * 0.008) / (dtMouse * 60);
+      const instantVp = (dy * 0.008) / (dtMouse * 60);
+      velocityYaw = velocityYaw * 0.4 + instantVy * 0.6;
+      velocityPitch = velocityPitch * 0.4 + instantVp * 0.6;
+
       lastMouseX = e.clientX;
       lastMouseY = e.clientY;
+      lastDragTimestamp = now;
     };
+
     const onMouseUp = () => {
       isDragging = false;
     };
@@ -175,6 +632,29 @@ export const FloatingOrb: React.FC = () => {
       const curActive = isVoiceActiveRef.current || isSpeaking || isListening;
       const curFreq = frequencyDataRef.current;
       const currentTheme = accentThemeRef.current;
+      const currentShape = coreShapeRef.current || 'sphere';
+
+      // Parse frequency spectrum data if available
+      let bassEnergy = 0;
+      let midEnergy = 0;
+      let trebleEnergy = 0;
+      if (curFreq && curFreq.length > 0) {
+        const binCount = curFreq.length;
+        const bassEnd = Math.max(1, Math.floor(binCount * 0.12));
+        const midEnd = Math.max(bassEnd + 1, Math.floor(binCount * 0.45));
+
+        let sumBass = 0;
+        for (let i = 0; i < bassEnd; i++) sumBass += curFreq[i];
+        bassEnergy = sumBass / (bassEnd * 255);
+
+        let sumMid = 0;
+        for (let i = bassEnd; i < midEnd; i++) sumMid += curFreq[i];
+        midEnergy = sumMid / ((midEnd - bassEnd) * 255);
+
+        let sumTreble = 0;
+        for (let i = midEnd; i < binCount; i++) sumTreble += curFreq[i];
+        trebleEnergy = sumTreble / ((binCount - midEnd) * 255);
+      }
 
       // Extract RGB values for primary and secondary theme colors (#99FFFF default)
       const rgbPrimary = hexToRgb(currentTheme?.primary || '#99FFFF');
@@ -197,28 +677,38 @@ export const FloatingOrb: React.FC = () => {
         : 0.08;
       smoothedSpeechEnergy += (targetSpeechEnergy - smoothedSpeechEnergy) * 0.085 * speedFactor;
 
-      // Dynamic Acoustic wave phase speed
-      const targetWaveSpeed = isSpeaking
-        ? 0.016 + smoothedAudioLevel * 0.022
-        : isListening
-        ? 0.008 + smoothedAudioLevel * 0.012
-        : 0.004;
-      smoothedWaveSpeed += (targetWaveSpeed - smoothedWaveSpeed) * 0.06 * speedFactor;
-      wavePhase += smoothedWaveSpeed * speedFactor;
-
       // Update Holo Pulses
       holoPulses.forEach((pulse) => {
         pulse.angle = (pulse.angle + pulse.speed * (isThinking ? 1.4 : 0.8) * speedFactor) % (Math.PI * 2);
       });
 
-      // Cinematic slow continuous 3D rotation
+      // Cinematic slow continuous 3D rotation & Momentum Decay Physics
       const targetYawSpeed = isSpeaking ? 0.0028 : isThinking ? 0.0036 : 0.0020;
       smoothedYawSpeed += (targetYawSpeed - smoothedYawSpeed) * 0.04 * speedFactor;
 
       if (!isDragging) {
-        currentYaw += smoothedYawSpeed * speedFactor;
-        currentPitch = 0.10 + Math.sin(time * 0.3) * 0.02;
+        currentYaw += velocityYaw * speedFactor;
+        currentPitch += velocityPitch * speedFactor;
+
+        // Friction decay: ~0.94 multiplier per frame
+        velocityYaw *= Math.pow(0.94, speedFactor);
+        velocityPitch *= Math.pow(0.94, speedFactor);
+
+        // Revert to gentle idle drift when momentum dissipates
+        if (Math.abs(velocityYaw) < 0.0001) {
+          velocityYaw = 0;
+          currentYaw += smoothedYawSpeed * speedFactor;
+        }
+        if (Math.abs(velocityPitch) < 0.0001) {
+          velocityPitch = 0;
+          currentPitch += (0.10 + Math.sin(time * 0.3) * 0.02 - currentPitch) * 0.02 * speedFactor;
+        }
       }
+
+      // Safe pitch clamping: [-π/2 + 0.1, π/2 - 0.1]
+      const maxPitch = Math.PI / 2 - 0.1;
+      const minPitch = -Math.PI / 2 + 0.1;
+      currentPitch = Math.max(minPitch, Math.min(maxPitch, currentPitch));
 
       const dpr = window.devicePixelRatio || 1;
       const width = canvas.clientWidth || 380;
@@ -245,7 +735,11 @@ export const FloatingOrb: React.FC = () => {
 
       // --- 1. Atmospheric Ambient Radial Glow (#99FFFF) ---
       if (ambientGlowEnabledRef.current) {
-        const targetGlowAlpha = isSpeaking ? 0.42 + smoothedAudioLevel * 0.22 : curActive ? 0.35 : 0.24 + morphProgress * 0.10;
+        const targetGlowAlpha = isSpeaking
+          ? 0.42 + smoothedAudioLevel * 0.22
+          : curActive
+          ? 0.35
+          : 0.24 + morphProgress * 0.10;
         smoothedGlowAlpha += (targetGlowAlpha - smoothedGlowAlpha) * 0.08;
 
         const ambientGlow = ctx.createRadialGradient(
@@ -277,7 +771,7 @@ export const FloatingOrb: React.FC = () => {
         const jarvisSpin2 = -time * 1.0;
         const jarvisSpin3 = time * 0.35;
 
-        // A. Segmented Inner Gimbal Arc Ring (encircling the central sphere)
+        // A. Segmented Inner Gimbal Arc Ring (encircling the central core)
         ctx.strokeStyle = `rgba(${rgbPrimary.r}, ${rgbPrimary.g}, ${rgbPrimary.b}, ${hudAlpha * 0.8})`;
         ctx.lineWidth = 1.8;
         for (let a = 0; a < 3; a++) {
@@ -317,138 +811,150 @@ export const FloatingOrb: React.FC = () => {
 
       ctx.globalCompositeOperation = 'screen';
 
-      // --- 3. PROJECT & RENDER 3D SPHERE PARTICLES & ORBITAL RINGS ---
-      const projectedPoints: {
-        x: number;
-        y: number;
-        z: number;
-        scale: number;
-        color: string;
-        glowColor: string;
-        size: number;
-        alpha: number;
-        isLaserPulse: boolean;
-        tier: number;
-      }[] = [];
+      // --- 3. GENERATE PROCEDURAL 3D SHAPE PARTICLES & WIREFRAMES ---
+      let rawParticles: Point3D[] = [];
+      let icoData: { vertices: [number, number, number][]; edges: [number, number][] } | null = null;
+      let tesseractData: { projected3DVertices: [number, number, number][]; edges: [number, number][] } | null = null;
+      let helixRungs: { pA: Point3D; pB: Point3D }[] | null = null;
 
-      // Base Mathematical Sphere Radius (Enlarged)
-      const baseSphereRadius = 148;
-
-      for (let i = 0; i < particles.length; i++) {
-        const p = particles[i];
-
-        // 1. Pristine Pure Mathematical Sphere Geometry with Guaranteed Bold 3D Acoustic Waves
-        let voiceSoundwave = 0;
-        let acousticBrightness = 0;
-
-        // Guaranteed active vocal cadence envelope during speech (never stays flat or static)
-        const vocalCadence = isSpeaking
-          ? 0.70 + Math.sin(time * 2.8) * 0.22 + Math.cos(time * 4.6 + p.phi * 2.0) * 0.18 + (smoothedAudioLevel * 0.45)
-          : isListening
-          ? 0.40 + (smoothedAudioLevel * 0.65)
-          : 0.06;
-
-        if (isSpeaking) {
-          // A. Strong, visible traveling circumferential soundwave circulating around the sphere (Longitude)
-          const waveCircumference = Math.sin(p.theta * 4.0 - time * 3.2) * (vocalCadence * 38.0);
-
-          // B. Cascading vertical latitude wave ripples (Pole to Equator)
-          const waveVertical = Math.cos(p.phi * 5.0 + time * 3.6) * (vocalCadence * 32.0);
-
-          // C. Equatorial vocal speech breathing bulge
-          const voiceBulge = Math.cos(p.phi) * Math.sin(time * 2.4 + p.theta) * (vocalCadence * 26.0);
-
-          // D. Harmonic acoustic resonance
-          const harmonicFlow = Math.sin(time * 4.8 + p.phi * 3.0 + p.theta * 2.0) * (vocalCadence * 14.0);
-
-          voiceSoundwave = waveCircumference + waveVertical + voiceBulge + harmonicFlow;
-          acousticBrightness = Math.min(1.0, 0.45 + vocalCadence * 0.55);
-        } else if (isListening) {
-          const waveListening = Math.sin(p.phi * 3.5 - time * 2.0) * (vocalCadence * 18.0) + Math.cos(p.theta * 3.0 - time * 1.6) * (vocalCadence * 16.0);
-          voiceSoundwave = waveListening;
-          acousticBrightness = 0.35 + vocalCadence * 0.45;
-        } else {
-          // Serene, continuous fluid breathing so sphere is always seamlessly alive and moving
-          const breath = Math.sin(time * 1.6 + p.phi * 1.5 + p.theta) * 4.2;
-          voiceSoundwave = breath;
-          acousticBrightness = 0.15;
+      switch (currentShape) {
+        case 'torus':
+          rawParticles = generateTorusPoints(time, curStatus, smoothedAudioLevel, bassEnergy);
+          break;
+        case 'icosahedron': {
+          const res = generateIcosahedronPoints(time, curStatus, smoothedAudioLevel, midEnergy);
+          rawParticles = res.particles;
+          icoData = { vertices: res.vertices, edges: res.edges };
+          break;
         }
-
-        const rSph = baseSphereRadius + voiceSoundwave;
-        const xSph = rSph * Math.cos(p.phi) * Math.sin(p.theta);
-        const ySph = rSph * Math.sin(p.phi);
-        const zSph = rSph * Math.cos(p.phi) * Math.cos(p.theta);
-
-        // 2. Orbital Rings in J.A.R.V.I.S. Mode (Sphere remains the centerpiece)
-        let jX = xSph;
-        let jY = ySph;
-        let jZ = zSph;
-
-        if (p.tier === 3) {
-          // Inner Orbital Gimbal Ring revolving around sphere
-          const spinSpeed = -time * 1.2;
-          const animatedTheta = p.theta + spinSpeed;
-          const rad = p.ringRadius + Math.sin(time * 3 + p.theta * 4) * 1.5;
-
-          const tilt = Math.PI * 0.28;
-          const rx = Math.cos(animatedTheta) * rad;
-          const rz = Math.sin(animatedTheta) * rad;
-          jX = rx;
-          jY = rz * Math.sin(tilt);
-          jZ = rz * Math.cos(tilt);
-        } else if (p.tier === 4) {
-          // Outer Gimbal Ring revolving counter-clockwise
-          const spinSpeed = time * 0.8;
-          const animatedTheta = p.theta + spinSpeed;
-          const rad = p.ringRadius + Math.sin(time * 3 + p.theta * 4) * 2.0;
-
-          const tilt = -Math.PI * 0.32;
-          const rx = Math.cos(animatedTheta) * rad;
-          const rz = Math.sin(animatedTheta) * rad;
-          jX = rx * Math.cos(tilt);
-          jY = rx * Math.sin(tilt);
-          jZ = rz;
-        } else {
-          // Central Sphere Core: stays pure and spherical with energy pulsation
-          const breath = Math.sin(time * 2.5 + p.seed * 3) * (0.8 + morphProgress * 1.2);
-          jX = (baseSphereRadius + breath + voiceSoundwave) * Math.cos(p.phi) * Math.sin(p.theta);
-          jY = (baseSphereRadius + breath + voiceSoundwave) * Math.sin(p.phi);
-          jZ = (baseSphereRadius + breath + voiceSoundwave) * Math.cos(p.phi) * Math.cos(p.theta);
+        case 'helix': {
+          const res = generateHelixPoints(time, curStatus, smoothedAudioLevel, bassEnergy);
+          rawParticles = res.particles;
+          helixRungs = res.rungs;
+          break;
         }
+        case 'tesseract': {
+          const res = generateTesseractPoints(time, curStatus, smoothedAudioLevel, midEnergy);
+          rawParticles = res.particles;
+          tesseractData = { projected3DVertices: res.projected3DVertices, edges: res.edges };
+          break;
+        }
+        case 'sphere':
+        default:
+          rawParticles = generateSpherePoints(time, curStatus, smoothedAudioLevel, morphProgress);
+          break;
+      }
 
-        // 3. Smooth Morphing Interpolation
-        const easeMorph =
-          morphProgress < 0.5
-            ? 2 * morphProgress * morphProgress
-            : 1 - Math.pow(-2 * morphProgress + 2, 2) / 2;
-
-        const x0 = xSph * (1 - easeMorph) + jX * easeMorph;
-        const y0 = ySph * (1 - easeMorph) + jY * easeMorph;
-        const z0 = zSph * (1 - easeMorph) + jZ * easeMorph;
-
-        // 4. 3D Camera Rotation
+      // Helper to project any 3D coordinate through camera
+      const project3D = (x0: number, y0: number, z0: number) => {
         const x1 = x0 * cosYaw - z0 * sinYaw;
         const z1 = x0 * sinYaw + z0 * cosYaw;
-
         const y2 = y0 * cosPitch - z1 * sinPitch;
         const z2 = y0 * sinPitch + z1 * cosPitch;
+        const scale = fov / (fov + z2);
+        return {
+          sx: centerX + x1 * scale,
+          sy: centerY + y2 * scale,
+          sz: z2,
+          scale,
+        };
+      };
 
-        // 5. Perspective Projection
+      // --- 4. DRAW CONNECTING WIREFRAME / LATTICE LINES ---
+
+      // A. Icosahedron Glowing Facet Edge Wireframes
+      if (icoData) {
+        ctx.save();
+        ctx.lineWidth = Math.max(0.8, 1.2 * (1.0 + smoothedAudioLevel * 0.5));
+        const edgeAlpha = Math.min(0.7, 0.25 + (isSpeaking ? 0.35 : isListening ? 0.2 : 0.1) + smoothedAudioLevel * 0.25);
+        ctx.strokeStyle = `rgba(${rgbPrimary.r}, ${rgbPrimary.g}, ${rgbPrimary.b}, ${edgeAlpha})`;
+
+        icoData.edges.forEach(([v1Idx, v2Idx]) => {
+          const v1 = icoData!.vertices[v1Idx];
+          const v2 = icoData!.vertices[v2Idx];
+          const p1 = project3D(v1[0], v1[1], v1[2]);
+          const p2 = project3D(v2[0], v2[1], v2[2]);
+
+          ctx.beginPath();
+          ctx.moveTo(p1.sx, p1.sy);
+          ctx.lineTo(p2.sx, p2.sy);
+          ctx.stroke();
+        });
+        ctx.restore();
+      }
+
+      // B. Tesseract 4D Hypercube Edge Wireframes
+      if (tesseractData) {
+        ctx.save();
+        ctx.lineWidth = Math.max(0.8, 1.1 * (1.0 + smoothedAudioLevel * 0.6));
+        const edgeAlpha = Math.min(0.65, 0.22 + (isSpeaking ? 0.32 : isListening ? 0.18 : 0.08) + smoothedAudioLevel * 0.2);
+        ctx.strokeStyle = `rgba(${rgbPrimary.r}, ${rgbPrimary.g}, ${rgbPrimary.b}, ${edgeAlpha})`;
+
+        tesseractData.edges.forEach(([v1Idx, v2Idx]) => {
+          const v1 = tesseractData!.projected3DVertices[v1Idx];
+          const v2 = tesseractData!.projected3DVertices[v2Idx];
+          const p1 = project3D(v1[0], v1[1], v1[2]);
+          const p2 = project3D(v2[0], v2[1], v2[2]);
+
+          ctx.beginPath();
+          ctx.moveTo(p1.sx, p1.sy);
+          ctx.lineTo(p2.sx, p2.sy);
+          ctx.stroke();
+        });
+        ctx.restore();
+      }
+
+      // C. Neural DNA Helix Base-Pair Rung Connecting Lines
+      if (helixRungs) {
+        ctx.save();
+        const rungAlpha = Math.min(0.6, 0.18 + smoothedAudioLevel * 0.35);
+        ctx.lineWidth = 1.0;
+        ctx.strokeStyle = `rgba(${rgbSecondary.r}, ${rgbSecondary.g}, ${rgbSecondary.b}, ${rungAlpha})`;
+
+        helixRungs.forEach(({ pA, pB }) => {
+          const p1 = project3D(pA.x, pA.y, pA.z);
+          const p2 = project3D(pB.x, pB.y, pB.z);
+
+          ctx.beginPath();
+          ctx.moveTo(p1.sx, p1.sy);
+          ctx.lineTo(p2.sx, p2.sy);
+          ctx.stroke();
+        });
+        ctx.restore();
+      }
+
+      // --- 5. PROJECT & DEPTH-SORT ALL PARTICLES ---
+      const projectedPoints: ProjectedPoint[] = [];
+
+      for (let i = 0; i < rawParticles.length; i++) {
+        const p = rawParticles[i];
+
+        // 3D Euler Transformation
+        const x1 = p.x * cosYaw - p.z * sinYaw;
+        const z1 = p.x * sinYaw + p.z * cosYaw;
+
+        const y2 = p.y * cosPitch - z1 * sinPitch;
+        const z2 = y0Pitch(p.y, z1, cosPitch, sinPitch);
+
+        // Perspective Projection
         const scale = fov / (fov + z2);
         const screenX = centerX + x1 * scale;
         const screenY = centerY + y2 * scale;
 
-        // 6. Laser Energy Pulse Check in J.A.R.V.I.S. Rings
+        // Laser Energy Pulse Check in J.A.R.V.I.S. Rings & Torus Accretion Rings
         let isPulseActive = false;
         let pulseIntensity = 0;
         let pulseColorType: 'primary' | 'secondary' | 'white' = 'primary';
 
-        if (morphProgress > 0.2 && (p.tier === 3 || p.tier === 4)) {
+        const tier = p.tier ?? 0;
+
+        if (currentShape === 'sphere' && morphProgress > 0.2 && (tier === 3 || tier === 4)) {
+          const theta = Math.atan2(p.x, p.z);
           for (let k = 0; k < holoPulses.length; k++) {
             const pulse = holoPulses[k];
-            if (pulse.ringIndex !== p.tier) continue;
+            if (pulse.ringIndex !== tier) continue;
 
-            const animatedTheta = p.theta + (p.tier === 3 ? -time * 1.2 : time * 0.8);
+            const animatedTheta = theta + (tier === 3 ? -time * 1.2 : time * 0.8);
             const dAngle = Math.abs(Math.sin((animatedTheta - pulse.angle) / 2));
             if (dAngle < 0.12) {
               isPulseActive = true;
@@ -458,12 +964,11 @@ export const FloatingOrb: React.FC = () => {
           }
         }
 
-        // 7. Particle Color & Sizing Calculation
-        const normalizedElevation = (p.phi + Math.PI / 2) / Math.PI;
+        // Particle Color & Sizing Calculation
         let rColor = rgbPrimary.r;
         let gColor = rgbPrimary.g;
         let bColor = rgbPrimary.b;
-        let pSize = 1.4 * scale;
+        let pSize = (p.size ?? 1.4) * scale;
         let alpha = 0.55 + scale * 0.35;
 
         if (isPulseActive) {
@@ -482,49 +987,36 @@ export const FloatingOrb: React.FC = () => {
           }
           pSize = (1.9 + pulseIntensity * 1.4) * scale;
           alpha = 1.0;
-        } else if (morphProgress > 0.4 && (p.tier === 3 || p.tier === 4)) {
-          // Orbital Rings
-          if (p.tier === 3) {
-            rColor = rgbSecondary.r;
-            gColor = rgbSecondary.g;
-            bColor = rgbSecondary.b;
-            pSize = 1.45 * scale;
-            alpha = 0.85;
+        } else if (p.colorType === 'white') {
+          rColor = 255;
+          gColor = 255;
+          bColor = 255;
+          alpha = Math.min(1.0, alpha + 0.2);
+        } else if (p.colorType === 'secondary' || tier === 3 || tier === 4) {
+          rColor = rgbSecondary.r;
+          gColor = rgbSecondary.g;
+          bColor = rgbSecondary.b;
+          if (tier === 3) alpha = 0.85;
+          if (tier === 4) alpha = 0.75;
+        } else if (isSpeaking && smoothedAudioLevel > 0.25) {
+          // Luminescent white-hot highlights on vocal audio crests
+          const crest = Math.min(1.0, smoothedAudioLevel * 1.5);
+          rColor = Math.min(255, Math.floor(rgbPrimary.r + (255 - rgbPrimary.r) * crest));
+          gColor = Math.min(255, Math.floor(rgbPrimary.g + (255 - rgbPrimary.g) * crest));
+          bColor = 255;
+          pSize = (p.size ?? 1.4) * (1.2 + crest * 0.6) * scale;
+          alpha = Math.min(1.0, 0.75 + crest * 0.25);
+        } else if (tier === 0 && currentShape === 'sphere') {
+          // Sphere elevation gradient
+          const normY = (p.y + 150) / 300;
+          if (normY > 0.6) {
+            rColor = Math.min(255, Math.floor(rgbPrimary.r * 1.05));
+            gColor = Math.min(255, Math.floor(rgbPrimary.g * 1.05));
+            bColor = Math.min(255, Math.floor(rgbPrimary.b * 1.05));
           } else {
-            rColor = Math.floor(rgbPrimary.r * 0.85);
-            gColor = Math.floor(rgbPrimary.g * 0.95);
-            bColor = Math.floor(rgbPrimary.b);
-            pSize = 1.35 * scale;
-            alpha = 0.75;
-          }
-        } else {
-          // Central Sphere Core Coloring (#99FFFF)
-          if (isSpeaking) {
-            // High energy luminescent wave peak coloring when talking
-            const crestIntensity = Math.min(1.0, Math.max(0, voiceSoundwave + 20) / 60);
-            rColor = Math.min(255, Math.floor(rgbPrimary.r + (255 - rgbPrimary.r) * crestIntensity));
-            gColor = Math.min(255, Math.floor(rgbPrimary.g + (255 - rgbPrimary.g) * crestIntensity));
-            bColor = 255;
-            pSize = (1.5 + crestIntensity * 1.8) * scale;
-            alpha = Math.min(1.0, 0.70 + crestIntensity * 0.30);
-          } else if (normalizedElevation > 0.65 || (curActive && curAudio > 0.35)) {
-            const peakGlow = curActive ? acousticBrightness : 0.25;
-            rColor = Math.min(255, Math.floor(rgbPrimary.r + (255 - rgbPrimary.r) * peakGlow));
-            gColor = Math.min(255, Math.floor(rgbPrimary.g + (255 - rgbPrimary.g) * peakGlow));
-            bColor = Math.min(255, Math.floor(rgbPrimary.b + (255 - rgbPrimary.b) * peakGlow));
-            pSize = (1.6 + (curActive ? acousticBrightness * 0.5 : 0)) * scale;
-            alpha = Math.min(1.0, alpha + (curActive ? acousticBrightness * 0.25 : 0));
-          } else if (normalizedElevation > 0.3) {
-            const elevBlend = (normalizedElevation - 0.3) / 0.35;
-            rColor = Math.floor(rgbSecondary.r * (1 - elevBlend) + rgbPrimary.r * elevBlend);
-            gColor = Math.floor(rgbSecondary.g * (1 - elevBlend) + rgbPrimary.r * elevBlend);
-            bColor = Math.floor(rgbSecondary.b * (1 - elevBlend) + rgbPrimary.b * elevBlend);
-            pSize = 1.45 * scale;
-          } else {
-            rColor = Math.floor(rgbSecondary.r * 0.8);
-            gColor = Math.floor(rgbSecondary.g * 0.9);
-            bColor = Math.floor(rgbSecondary.b);
-            pSize = 1.38 * scale;
+            rColor = Math.floor(rgbSecondary.r * 0.85 + rgbPrimary.r * 0.15);
+            gColor = Math.floor(rgbSecondary.g * 0.85 + rgbPrimary.g * 0.15);
+            bColor = Math.floor(rgbSecondary.b * 0.85 + rgbPrimary.b * 0.15);
           }
         }
 
@@ -541,7 +1033,7 @@ export const FloatingOrb: React.FC = () => {
           size: Math.max(0.8, pSize),
           alpha: Math.min(1, Math.max(0.15, alpha)),
           isLaserPulse: isPulseActive,
-          tier: p.tier,
+          tier,
         });
       }
 
@@ -558,7 +1050,7 @@ export const FloatingOrb: React.FC = () => {
         ctx.globalAlpha = pt.alpha;
         ctx.fill();
 
-        if (pt.isLaserPulse || (curActive && pt.size > 1.7) || (morphProgress > 0.5 && pt.tier < 3)) {
+        if (pt.isLaserPulse || (curActive && pt.size > 1.8) || (morphProgress > 0.5 && pt.tier < 3)) {
           ctx.beginPath();
           ctx.arc(pt.x, pt.y, pt.size * 1.8, 0, Math.PI * 2);
           ctx.fillStyle = pt.glowColor;
@@ -623,14 +1115,14 @@ export const FloatingOrb: React.FC = () => {
 
   return (
     <div className="relative flex flex-col items-center justify-center select-none w-full max-w-3xl mx-auto py-1">
-      {/* 3D Pristine Particle Sphere - Enlarged */}
+      {/* 3D Multi-Shape Procedural Intelligence Stage */}
       <div
         id="main-assistant-orb-stage"
         onClick={toggleListening}
         className="relative w-[340px] h-[320px] sm:w-[440px] sm:h-[400px] md:w-[520px] md:h-[460px] lg:w-[580px] lg:h-[500px] flex items-center justify-center cursor-grab active:cursor-grabbing transition-transform hover:scale-[1.02] active:scale-[0.98]"
         role="button"
         tabIndex={0}
-        aria-label="3D Pristine Particle Sphere"
+        aria-label={`3D ${coreShape} Intelligence Core`}
       >
         {/* Canvas Engine */}
         <canvas
@@ -684,3 +1176,8 @@ export const FloatingOrb: React.FC = () => {
     </div>
   );
 };
+
+// Helper for Euler Pitch Rotation
+function y0Pitch(y0: number, z1: number, cosPitch: number, sinPitch: number): number {
+  return y0 * sinPitch + z1 * cosPitch;
+}

@@ -19,6 +19,7 @@ import {
   DeepgramVoiceItem,
   EngineTelemetry,
   VoiceTelemetry,
+  CoreShapeId,
 } from '../types';
 import { StorageService } from '../services/storage';
 import { fetchAssistantChat, fetchDeepgramTTS, fetchDeepgramVoices, fetchSystemStatus } from '../services/api';
@@ -35,6 +36,8 @@ interface AssistantContextType {
   audioLevel: number;
   frequencyData: Uint8Array | null;
   accentTheme: AccentTheme;
+  coreShape: CoreShapeId;
+  setCoreShape: (shape: CoreShapeId) => void;
   reminders: ReminderItem[];
   notes: NoteItem[];
   currentTranscript: string;
@@ -197,6 +200,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [audioLevel, setAudioLevel] = useState<number>(0);
   const [frequencyData, setFrequencyData] = useState<Uint8Array | null>(null);
   const [accentTheme, setAccentThemeState] = useState<AccentTheme>(() => StorageService.loadTheme());
+  const [coreShape, setCoreShapeState] = useState<CoreShapeId>(() => StorageService.loadCoreShape('sphere'));
   const [reminders, setReminders] = useState<ReminderItem[]>(() => StorageService.loadReminders());
   const [notes, setNotes] = useState<NoteItem[]>(() => StorageService.loadNotes());
   const [currentTranscript, setCurrentTranscript] = useState<string>('');
@@ -314,6 +318,11 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setAccentThemeState(theme);
     StorageService.saveTheme(theme);
   };
+
+  const setCoreShape = useCallback((shape: CoreShapeId) => {
+    setCoreShapeState(shape);
+    StorageService.saveCoreShape(shape);
+  }, []);
 
   const setVoicePrefs = (prefs: VoicePreference) => {
     setVoicePrefsState(prefs);
@@ -920,6 +929,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         audioLevel,
         frequencyData,
         accentTheme,
+        coreShape,
+        setCoreShape,
         reminders,
         notes,
         currentTranscript,

@@ -13,6 +13,7 @@
     "build": "npm run build --workspace=app && npm run build --workspace=api",
     "build:app": "npm run build --workspace=app",
     "build:api": "npm run build --workspace=api",
-    "lint": "npm run lint --workspace=app && npm run lint --workspace=api"
+    "lint": "npm run lint --workspace=app && npm run lint --workspace=api",
+    "test": "node --experimental-strip-types tests/runner.ts"
   }
 }
