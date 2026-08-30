@@ -18,7 +18,7 @@ from typing import AsyncIterable, AsyncIterator
 
 from dotenv import load_dotenv
 from livekit import rtc
-from livekit.agents import Agent, AgentSession, JobContext, WorkerOptions, cli
+from livekit.agents import Agent, AgentServer, AgentSession, JobContext, cli
 from livekit.agents.utils.codecs import AudioStreamDecoder
 from livekit.plugins import deepgram, groq, silero
 
@@ -156,11 +156,7 @@ class FoxHermesVoiceAgent(Agent):
         )
 
     async def llm_node(self, chat_ctx, tools, model_settings):
-        """Use Hermes as LiveKit's streaming LLM node.
-
-        Hermes owns its own tool loop and memory. LiveKit receives plain text
-        deltas, so its normal transcript/turn/interruption pipeline stays intact.
-        """
+        """Use Hermes as LiveKit's streaming LLM node."""
         transcript = _latest_user_text(chat_ctx)
         if not transcript:
             return
@@ -201,8 +197,14 @@ def build_session() -> tuple[AgentSession, bool]:
     return session, deepgram_available
 
 
+server = AgentServer()
+
+
+@server.rtc_session(agent_name="fox")
 async def entrypoint(ctx: JobContext) -> None:
+    ctx.log_context_fields = {"room": ctx.room.name}
     logger.info("Starting Fox realtime voice session for room %s", ctx.room.name)
+
     session, deepgram_available = build_session()
     agent = FoxHermesVoiceAgent(deepgram_available=deepgram_available)
 
@@ -222,14 +224,14 @@ async def entrypoint(ctx: JobContext) -> None:
         if "fox.tts.provider" in changed_attributes or "fox.tts.voice" in changed_attributes:
             apply_participant_preferences(participant)
 
+    await session.start(room=ctx.room, agent=agent)
+    await ctx.connect()
+
+    # Apply attributes for participants that were already present when the
+    # worker connected to the room.
     for participant in ctx.room.remote_participants.values():
         apply_participant_preferences(participant)
 
-    await session.start(
-        room=ctx.room,
-        agent=agent,
-    )
-
 
 if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+    cli.run_app(server)
