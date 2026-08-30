@@ -1,17 +1,22 @@
 """LiveKit realtime voice worker for FoxAI.
 
 Ears: LiveKit WebRTC -> Silero VAD -> Groq Whisper Large v3 Turbo
-Brain: existing Hermes VoiceWorkflow via HermesVoiceAdapter
+Brain: official Hermes runtime (with safe FoxAI compatibility fallback)
 Mouth: user-selectable Edge / Piper / Deepgram TTS
 
-The frontend stores the user's voice choice in LiveKit participant attributes.
-The worker reads those attributes at join time and listens for later changes, so
-changing the TTS provider in Settings does not require rewriting Hermes or the
-existing browser voice path.
+Latency strategy:
+- Hermes text deltas are consumed as they arrive from the upstream runtime.
+- Deltas are grouped into short natural phrases instead of waiting for the full
+  response.
+- Edge/Piper synthesize short chunks; Piper runs off the asyncio event loop.
+- LiveKit owns full-duplex transport and interruption/playout lifecycle.
 """
+
+from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import AsyncIterator
 
 from dotenv import load_dotenv
@@ -20,7 +25,7 @@ from livekit.agents import Agent, AgentSession, JobContext, WorkerOptions, cli
 from livekit.agents.utils.codecs import AudioStreamDecoder
 from livekit.plugins import deepgram, groq, silero
 
-from Tts.service import synthesize_speech
+from Tts.service import stream_speech_chunks
 from voice.hermes_adapter import HermesVoiceAdapter
 
 load_dotenv()
@@ -28,6 +33,50 @@ logger = logging.getLogger("fox.voice")
 
 SUPPORTED_TTS_PROVIDERS = {"edge", "piper", "deepgram"}
 DEFAULT_TTS_PROVIDER = os.getenv("VOICE_TTS_PROVIDER", "edge").lower()
+PHRASE_MIN_CHARS = int(os.getenv("VOICE_TTS_PHRASE_MIN_CHARS", "48"))
+PHRASE_MAX_CHARS = int(os.getenv("VOICE_TTS_PHRASE_MAX_CHARS", "180"))
+
+
+async def _phrase_stream(text_stream: AsyncIterator[str]) -> AsyncIterator[str]:
+    """Convert token/delta streaming into speakable phrases.
+
+    We emit at sentence boundaries as soon as there is enough text, and fall
+    back to comma/clause/space boundaries when the buffer gets long. This is a
+    latency/quality compromise: much faster first audio without choppy
+    word-by-word TTS.
+    """
+    buffer = ""
+
+    async for delta in text_stream:
+        if not delta:
+            continue
+        buffer += delta
+
+        while buffer:
+            sentence_match = re.search(r"[.!?](?:\s|$)", buffer)
+            if sentence_match and sentence_match.end() >= PHRASE_MIN_CHARS:
+                cut = sentence_match.end()
+            elif len(buffer) >= PHRASE_MAX_CHARS:
+                window = buffer[:PHRASE_MAX_CHARS]
+                cut = max(
+                    window.rfind(", "),
+                    window.rfind("; "),
+                    window.rfind(": "),
+                    window.rfind(" "),
+                )
+                if cut < PHRASE_MIN_CHARS:
+                    cut = PHRASE_MAX_CHARS
+            else:
+                break
+
+            phrase = buffer[:cut].strip()
+            buffer = buffer[cut:].lstrip()
+            if phrase:
+                yield phrase
+
+    tail = buffer.strip()
+    if tail:
+        yield tail
 
 
 async def _fox_tts_audio(
@@ -35,31 +84,26 @@ async def _fox_tts_audio(
     provider: str,
     voice: str | None,
 ) -> AsyncIterator[rtc.AudioFrame]:
-    """Synthesize Edge/Piper audio and decode it into LiveKit PCM frames.
-
-    This intentionally reuses FoxAI's existing TTS service instead of creating
-    a second Edge/Piper implementation. It keeps the old REST/browser path and
-    the new LiveKit path on the same engines and voice identifiers.
-    """
-    audio_bytes, mime_type = await synthesize_speech(
+    """Synthesize Edge/Piper in short chunks and decode to LiveKit PCM frames."""
+    async for audio_bytes, mime_type in stream_speech_chunks(
         text,
         engine=provider,
         voice=voice or None,
-    )
+        max_chars=PHRASE_MAX_CHARS,
+    ):
+        decoder = AudioStreamDecoder(
+            sample_rate=48000,
+            num_channels=1,
+            format=mime_type,
+        )
+        decoder.push(audio_bytes)
+        decoder.end_input()
 
-    decoder = AudioStreamDecoder(
-        sample_rate=48000,
-        num_channels=1,
-        format=mime_type,
-    )
-    decoder.push(audio_bytes)
-    decoder.end_input()
-
-    try:
-        async for frame in decoder:
-            yield frame
-    finally:
-        await decoder.aclose()
+        try:
+            async for frame in decoder:
+                yield frame
+        finally:
+            await decoder.aclose()
 
 
 class FoxHermesVoiceAgent(Agent):
@@ -76,6 +120,7 @@ class FoxHermesVoiceAgent(Agent):
             DEFAULT_TTS_PROVIDER if DEFAULT_TTS_PROVIDER in SUPPORTED_TTS_PROVIDERS else "edge"
         )
         self.tts_voice = ""
+        logger.info("Hermes voice runtime: %s", self.hermes.runtime_name)
 
     def update_tts_preferences(self, provider: str | None, voice: str | None) -> None:
         requested = (provider or "").strip().lower()
@@ -87,10 +132,31 @@ class FoxHermesVoiceAgent(Agent):
                 self.tts_provider = requested
 
         self.tts_voice = (voice or "").strip()
-        logger.info("Realtime TTS updated: provider=%s voice=%s", self.tts_provider, self.tts_voice or "default")
+        logger.info(
+            "Realtime TTS updated: provider=%s voice=%s",
+            self.tts_provider,
+            self.tts_voice or "default",
+        )
+
+    def _speak_phrase(self, phrase: str) -> None:
+        """Queue one interruptible phrase using the currently selected provider."""
+        if self.tts_provider == "deepgram":
+            self.session.say(
+                phrase,
+                allow_interruptions=True,
+                add_to_chat_ctx=False,
+            )
+            return
+
+        self.session.say(
+            phrase,
+            audio=_fox_tts_audio(phrase, self.tts_provider, self.tts_voice or None),
+            allow_interruptions=True,
+            add_to_chat_ctx=False,
+        )
 
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
-        """Run Hermes reasoning and speak the result with the selected provider."""
+        """Stream Hermes output into TTS instead of waiting for the full answer."""
         transcript = getattr(new_message, "text_content", None)
         if callable(transcript):
             transcript = transcript()
@@ -99,33 +165,21 @@ class FoxHermesVoiceAgent(Agent):
         if not transcript:
             return
 
-        response = await self.hermes.respond(transcript)
-        if not response:
-            return
+        full_response: list[str] = []
+        async for phrase in _phrase_stream(self.hermes.stream_response(transcript)):
+            full_response.append(phrase)
+            self._speak_phrase(phrase)
 
-        if self.tts_provider == "deepgram":
-            # Uses AgentSession's Deepgram TTS plugin. The response is still
-            # interruptible through the LiveKit session.
-            self.session.say(
-                response,
-                allow_interruptions=True,
-                add_to_chat_ctx=True,
-            )
-            return
-
-        # Edge and Piper reuse FoxAI's existing TTS engines and provide decoded
-        # audio frames directly to LiveKit. This avoids browser-side playback
-        # while preserving the user's existing provider/voice settings.
-        self.session.say(
-            response,
-            audio=_fox_tts_audio(response, self.tts_provider, self.tts_voice or None),
-            allow_interruptions=True,
-            add_to_chat_ctx=True,
-        )
+        # Hermes itself owns durable conversation history. We only append one
+        # final assistant message to LiveKit context for diagnostics/captions,
+        # rather than one message per streamed phrase.
+        response_text = " ".join(full_response).strip()
+        if response_text:
+            turn_ctx.add_message(role="assistant", content=response_text)
 
 
 def build_session() -> tuple[AgentSession, bool]:
-    """Create the realtime listening pipeline and optional Deepgram TTS path."""
+    """Create realtime listening and the optional native Deepgram TTS path."""
     deepgram_available = bool(os.getenv("DEEPGRAM_API_KEY"))
     realtime_tts = (
         deepgram.TTS(model=os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-thalia-en"))
@@ -171,8 +225,6 @@ async def entrypoint(ctx: JobContext) -> None:
         if "fox.tts.provider" in changed_attributes or "fox.tts.voice" in changed_attributes:
             apply_participant_preferences(participant)
 
-    # If the browser joined before the worker, token attributes are already
-    # synchronized by LiveKit and can be applied before the first spoken turn.
     for participant in ctx.room.remote_participants.values():
         apply_participant_preferences(participant)
 
