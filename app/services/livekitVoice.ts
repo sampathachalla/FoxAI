@@ -15,6 +15,17 @@ export interface LiveKitTtsConfig {
   voice: string;
 }
 
+export type FoxAgentState = 'idle' | 'listening' | 'thinking' | 'searching' | 'speaking';
+
+interface AgentStatePacket {
+  type: 'agent_state';
+  state: FoxAgentState;
+  source?: string;
+  session_id?: string;
+}
+
+const AGENT_STATE_TOPIC = 'fox.agent.state';
+
 export function toLiveKitTtsConfig(voicePrefs?: VoicePreference): LiveKitTtsConfig {
   const provider = voicePrefs?.provider;
 
@@ -32,9 +43,6 @@ export function toLiveKitTtsConfig(voicePrefs?: VoicePreference): LiveKitTtsConf
     };
   }
 
-  // Hermes Edge is the default realtime provider. `webspeech` and `auto`
-  // cannot run inside the worker, so they intentionally map to Edge instead
-  // of silently selecting an unsupported backend.
   return {
     provider: 'edge',
     voice: voicePrefs?.hermesEdgeVoice || '',
@@ -62,6 +70,11 @@ export async function fetchLiveKitToken(ttsConfig: LiveKitTtsConfig): Promise<Li
 export class FoxLiveKitVoiceSession {
   private room: Room | null = null;
   private attachedAudio = new Set<HTMLMediaElement>();
+  private agentStateListener: ((state: FoxAgentState) => void) | null = null;
+
+  setAgentStateListener(listener: ((state: FoxAgentState) => void) | null): void {
+    this.agentStateListener = listener;
+  }
 
   async connect(ttsConfig: LiveKitTtsConfig): Promise<Room> {
     if (this.room?.state === 'connected') {
@@ -92,11 +105,32 @@ export class FoxLiveKitVoiceSession {
       });
     });
 
-    room.on(RoomEvent.Disconnected, () => this.cleanupAudio());
+    // Keep this handler intentionally tolerant of SDK argument-shape changes.
+    // Search state is supplemental UI and must never affect the audio session.
+    room.on(RoomEvent.DataReceived, (...args: any[]) => {
+      try {
+        const payload = args[0] as Uint8Array;
+        const topic = args[3] as string | undefined;
+        if (topic !== AGENT_STATE_TOPIC || !payload) return;
+
+        const packet = JSON.parse(new TextDecoder().decode(payload)) as AgentStatePacket;
+        if (packet.type !== 'agent_state') return;
+        if (!['idle', 'listening', 'thinking', 'searching', 'speaking'].includes(packet.state)) return;
+        this.agentStateListener?.(packet.state);
+      } catch (error) {
+        console.debug('[Fox LiveKit] Ignoring invalid agent-state packet', error);
+      }
+    });
+
+    room.on(RoomEvent.Disconnected, () => {
+      this.cleanupAudio();
+      this.agentStateListener?.('idle');
+    });
 
     await room.connect(credentials.url, credentials.token);
     await room.localParticipant.setMicrophoneEnabled(true);
     this.room = room;
+    this.agentStateListener?.('listening');
     return room;
   }
 
@@ -117,6 +151,7 @@ export class FoxLiveKitVoiceSession {
       await room.disconnect();
     }
     this.cleanupAudio();
+    this.agentStateListener?.('idle');
   }
 
   isConnected(): boolean {
