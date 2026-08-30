@@ -23,13 +23,13 @@ export const VoiceInputBar: React.FC = () => {
 
   const [inputVal, setInputVal] = useState('');
 
-  // Realtime voice is opt-in. When disabled, the exact existing browser voice
-  // behavior remains active, which makes this migration safe to roll out.
   const effectiveStatus = livekitVoice.enabled
     ? livekitVoice.connecting
       ? 'thinking'
       : livekitVoice.connected
-      ? 'listening'
+      ? livekitVoice.agentState === 'idle'
+        ? 'listening'
+        : livekitVoice.agentState
       : status
     : status;
 
@@ -43,7 +43,6 @@ export const VoiceInputBar: React.FC = () => {
     toggleListening();
   };
 
-  // Keyboard shortcut listener (Cmd+K / Ctrl+K / /)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -68,11 +67,14 @@ export const VoiceInputBar: React.FC = () => {
     }
   };
 
-  const isVoiceActive = effectiveStatus === 'listening' || effectiveStatus === 'speaking';
+  const isVoiceActive =
+    effectiveStatus === 'listening' ||
+    effectiveStatus === 'speaking' ||
+    effectiveStatus === 'searching' ||
+    effectiveStatus === 'thinking';
 
   return (
     <div className="w-full max-w-4xl mx-auto px-4 pb-6 pt-2 z-30">
-      {/* Main Artistic Flair Input Capsule */}
       <form
         onSubmit={handleSubmit}
         className="glass-card px-5 py-3.5 flex items-center space-x-4 border-white/20 shadow-2xl transition-all focus-within:border-white/40 focus-within:ring-1 focus-within:ring-[#007AFF]/40"
@@ -82,7 +84,6 @@ export const VoiceInputBar: React.FC = () => {
             : '0 12px 40px rgba(0, 0, 0, 0.7)',
         }}
       >
-        {/* Dynamic Voice Toggle / Accent Indicator Dot */}
         <button
           type="button"
           onClick={handleVoiceToggle}
@@ -92,11 +93,17 @@ export const VoiceInputBar: React.FC = () => {
               ? 'bg-red-500 text-white shadow-[0_0_15px_rgba(239,68,68,0.6)] animate-pulse'
               : effectiveStatus === 'speaking'
               ? 'bg-[#007AFF] text-white shadow-[0_0_15px_rgba(0,122,255,0.6)]'
+              : effectiveStatus === 'searching'
+              ? 'bg-amber-500/80 text-white shadow-[0_0_15px_rgba(245,158,11,0.45)]'
               : 'bg-white/10 hover:bg-white/20 text-white'
           }`}
           title={
             livekitVoice.connecting
               ? 'Connecting realtime voice...'
+              : effectiveStatus === 'searching'
+              ? 'Fox is searching the web...'
+              : effectiveStatus === 'thinking'
+              ? 'Fox is thinking...'
               : effectiveStatus === 'listening'
               ? 'Stop listening'
               : effectiveStatus === 'speaking'
@@ -115,7 +122,6 @@ export const VoiceInputBar: React.FC = () => {
             <Mic className="w-4 h-4 text-neutral-200" />
           )}
 
-          {/* Mini pulse ring when listening */}
           {effectiveStatus === 'listening' && (
             <span
               className="absolute inset-0 rounded-full border-2 border-white/80 animate-ping pointer-events-none"
@@ -124,7 +130,6 @@ export const VoiceInputBar: React.FC = () => {
           )}
         </button>
 
-        {/* Accent Glow Dot */}
         <div
           className="w-2.5 h-2.5 rounded-full shrink-0 transition-colors"
           style={{
@@ -133,7 +138,6 @@ export const VoiceInputBar: React.FC = () => {
           }}
         />
 
-        {/* Text Input */}
         <input
           id="assistant-prompt-input"
           type="text"
@@ -142,6 +146,10 @@ export const VoiceInputBar: React.FC = () => {
           placeholder={
             livekitVoice.connecting
               ? 'Connecting realtime voice...'
+              : effectiveStatus === 'searching'
+              ? 'Searching the web...'
+              : effectiveStatus === 'thinking'
+              ? 'Fox is thinking...'
               : effectiveStatus === 'listening'
               ? 'Listening to your voice...'
               : effectiveStatus === 'speaking'
@@ -152,7 +160,6 @@ export const VoiceInputBar: React.FC = () => {
           className="bg-transparent border-none text-white focus:outline-none w-full text-base font-light placeholder-neutral-600 selection:bg-[#007AFF]"
         />
 
-        {/* Right Shortcuts & Submit Pill */}
         <div className="flex items-center space-x-2 shrink-0">
           {inputVal.trim() ? (
             <button
@@ -192,6 +199,11 @@ export const VoiceInputBar: React.FC = () => {
           )}
         </div>
       </form>
+      {livekitVoice.enabled && livekitVoice.agentState === 'searching' && (
+        <p className="mt-2 px-2 text-xs text-amber-200" role="status">
+          Fox is searching current sources…
+        </p>
+      )}
       {livekitVoice.enabled && livekitVoice.error && (
         <p className="mt-2 px-2 text-xs text-red-300" role="status">
           Realtime voice unavailable: {livekitVoice.error}. Existing text chat is still available.
