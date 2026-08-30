@@ -6,3 +6,9 @@ openai>=1.50.0
 python-dotenv>=1.0.0
 edge-tts>=6.1.9
 piper-tts>=1.2.0
+
+# Realtime voice architecture
+livekit-agents>=1.2.0
+livekit-plugins-silero>=1.2.0
+livekit-plugins-groq>=1.2.0
+livekit-plugins-deepgram>=1.2.0
