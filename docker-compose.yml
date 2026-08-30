@@ -1,5 +1,5 @@
 services:
-  # Python FastAPI Hermes Agent Microservice (port 8000)
+  # Existing Python FastAPI agent stays on its original image/runtime.
   python-agent:
     build:
       context: ./api/agent
@@ -16,15 +16,16 @@ services:
       - ./api/agent/Tts/piper_models:/app/Tts/piper_models
     restart: unless-stopped
 
-  # Realtime LiveKit voice worker. It is behind the `voice` profile so normal
-  # docker-compose startup remains unchanged until realtime voice is enabled.
+  # Realtime LiveKit voice worker is opt-in so normal startup remains unchanged.
+  # It uses a separate image containing the official upstream Hermes checkout.
   voice-worker:
     profiles: ["voice"]
     build:
       context: ./api/agent
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.voice
+      args:
+        HERMES_UPSTREAM_REF: ${HERMES_UPSTREAM_REF:-v2026.8.27}
     container_name: fox-livekit-voice-worker
-    command: ["python", "-m", "voice.worker", "dev"]
     env_file:
       - path: ./api/.env
         required: false
