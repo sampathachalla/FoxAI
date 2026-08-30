@@ -3,6 +3,16 @@ import { AccessToken } from 'livekit-server-sdk';
 
 const router = Router();
 
+type RealtimeTtsProvider = 'deepgram' | 'edge' | 'piper';
+
+function normalizeTtsProvider(value: unknown): RealtimeTtsProvider {
+  if (value === 'deepgram') return 'deepgram';
+  if (value === 'hermes-piper' || value === 'piper') return 'piper';
+  // Edge is the safe/default realtime voice provider. Browser/auto selections
+  // also land here so the worker never receives an unsupported provider name.
+  return 'edge';
+}
+
 router.post('/token', async (req, res) => {
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
@@ -16,6 +26,8 @@ router.post('/token', async (req, res) => {
 
   const requestedIdentity = typeof req.body?.identity === 'string' ? req.body.identity.trim() : '';
   const requestedRoom = typeof req.body?.room === 'string' ? req.body.room.trim() : '';
+  const requestedVoice = typeof req.body?.ttsVoice === 'string' ? req.body.ttsVoice.trim() : '';
+  const ttsProvider = normalizeTtsProvider(req.body?.ttsProvider);
 
   const identity = requestedIdentity || `fox-web-${Date.now()}`;
   const room = requestedRoom || `fox-${identity}`;
@@ -25,6 +37,10 @@ router.post('/token', async (req, res) => {
       identity,
       name: 'Fox Web User',
       ttl: '15m',
+      attributes: {
+        'fox.tts.provider': ttsProvider,
+        'fox.tts.voice': requestedVoice,
+      },
     });
 
     token.addGrant({
@@ -33,6 +49,9 @@ router.post('/token', async (req, res) => {
       canPublish: true,
       canSubscribe: true,
       canPublishData: true,
+      // TTS settings are low-frequency participant state. Allow the frontend
+      // to update them without reconnecting when the user changes Settings.
+      canUpdateOwnMetadata: true,
     });
 
     return res.json({
@@ -40,6 +59,8 @@ router.post('/token', async (req, res) => {
       url,
       room,
       identity,
+      ttsProvider,
+      ttsVoice: requestedVoice,
     });
   } catch (error) {
     console.error('[LiveKit] Failed to mint access token:', error);
