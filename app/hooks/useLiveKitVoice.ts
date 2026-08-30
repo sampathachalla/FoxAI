@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { VoicePreference } from '../types';
 import {
   FoxLiveKitVoiceSession,
+  type FoxAgentState,
   toLiveKitTtsConfig,
 } from '../services/livekitVoice';
 
@@ -11,6 +12,7 @@ export function useLiveKitVoice(voicePrefs?: VoicePreference) {
   const voicePrefsRef = useRef<VoicePreference | undefined>(voicePrefs);
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [agentState, setAgentState] = useState<FoxAgentState>('idle');
   const [error, setError] = useState<string | null>(null);
 
   voicePrefsRef.current = voicePrefs;
@@ -19,6 +21,11 @@ export function useLiveKitVoice(voicePrefs?: VoicePreference) {
     sessionRef.current = new FoxLiveKitVoiceSession();
   }
 
+  useEffect(() => {
+    sessionRef.current?.setAgentStateListener(setAgentState);
+    return () => sessionRef.current?.setAgentStateListener(null);
+  }, []);
+
   const connect = useCallback(async () => {
     if (!enabled || connecting || connected) return;
     setConnecting(true);
@@ -26,8 +33,10 @@ export function useLiveKitVoice(voicePrefs?: VoicePreference) {
     try {
       await sessionRef.current!.connect(toLiveKitTtsConfig(voicePrefsRef.current));
       setConnected(true);
+      setAgentState('listening');
     } catch (err) {
       setConnected(false);
+      setAgentState('idle');
       setError(err instanceof Error ? err.message : 'Failed to start realtime voice');
       throw err;
     } finally {
@@ -39,6 +48,7 @@ export function useLiveKitVoice(voicePrefs?: VoicePreference) {
     await sessionRef.current?.disconnect();
     setConnected(false);
     setConnecting(false);
+    setAgentState('idle');
   }, []);
 
   const toggle = useCallback(async () => {
@@ -50,9 +60,6 @@ export function useLiveKitVoice(voicePrefs?: VoicePreference) {
     }
   }, [enabled, connected, connect, disconnect]);
 
-  // Settings can change while a voice room is already active. Participant
-  // attributes let the worker receive that low-frequency preference update
-  // without reconnecting or touching the existing assistant context.
   useEffect(() => {
     if (!enabled || !connected) return;
 
@@ -74,6 +81,7 @@ export function useLiveKitVoice(voicePrefs?: VoicePreference) {
     enabled,
     connected,
     connecting,
+    agentState,
     error,
     connect,
     disconnect,
