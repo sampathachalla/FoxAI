@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
-import { Mic, StopCircle, ArrowUp, Sparkles } from 'lucide-react';
+import { useLiveKitVoice } from '../hooks/useLiveKitVoice';
+import { Mic, StopCircle, ArrowUp } from 'lucide-react';
 
 const PROMPT_SUGGESTIONS = [
   'Analyze modular architecture in React',
@@ -17,8 +18,29 @@ export const VoiceInputBar: React.FC = () => {
     toggleListening,
     sendMessage,
   } = useVoiceAssistant();
+  const livekitVoice = useLiveKitVoice();
 
   const [inputVal, setInputVal] = useState('');
+
+  // Realtime voice is opt-in. When disabled, the exact existing browser voice
+  // behavior remains active, which makes this migration safe to roll out.
+  const effectiveStatus = livekitVoice.enabled
+    ? livekitVoice.connecting
+      ? 'thinking'
+      : livekitVoice.connected
+      ? 'listening'
+      : status
+    : status;
+
+  const handleVoiceToggle = () => {
+    if (livekitVoice.enabled) {
+      void livekitVoice.toggle().catch((err) => {
+        console.error('[Fox LiveKit] Voice session failed:', err);
+      });
+      return;
+    }
+    toggleListening();
+  };
 
   // Keyboard shortcut listener (Cmd+K / Ctrl+K / /)
   useEffect(() => {
@@ -45,7 +67,7 @@ export const VoiceInputBar: React.FC = () => {
     }
   };
 
-  const isVoiceActive = status === 'listening' || status === 'speaking';
+  const isVoiceActive = effectiveStatus === 'listening' || effectiveStatus === 'speaking';
 
   return (
     <div className="w-full max-w-4xl mx-auto px-4 pb-6 pt-2 z-30">
@@ -62,33 +84,38 @@ export const VoiceInputBar: React.FC = () => {
         {/* Dynamic Voice Toggle / Accent Indicator Dot */}
         <button
           type="button"
-          onClick={toggleListening}
+          onClick={handleVoiceToggle}
+          disabled={livekitVoice.enabled && livekitVoice.connecting}
           className={`relative p-2.5 rounded-full flex items-center justify-center transition-all cursor-pointer ${
-            status === 'listening'
+            effectiveStatus === 'listening'
               ? 'bg-red-500 text-white shadow-[0_0_15px_rgba(239,68,68,0.6)] animate-pulse'
-              : status === 'speaking'
+              : effectiveStatus === 'speaking'
               ? 'bg-[#007AFF] text-white shadow-[0_0_15px_rgba(0,122,255,0.6)]'
               : 'bg-white/10 hover:bg-white/20 text-white'
           }`}
           title={
-            status === 'listening'
+            livekitVoice.connecting
+              ? 'Connecting realtime voice...'
+              : effectiveStatus === 'listening'
               ? 'Stop listening'
-              : status === 'speaking'
+              : effectiveStatus === 'speaking'
               ? 'Stop speaking'
+              : livekitVoice.enabled
+              ? 'Start LiveKit voice session'
               : 'Speak to Fox'
           }
           aria-label="Voice toggle"
         >
-          {status === 'listening' ? (
+          {effectiveStatus === 'listening' ? (
             <Mic className="w-4 h-4 text-white" />
-          ) : status === 'speaking' ? (
+          ) : effectiveStatus === 'speaking' ? (
             <StopCircle className="w-4 h-4 text-white" />
           ) : (
             <Mic className="w-4 h-4 text-neutral-200" />
           )}
 
           {/* Mini pulse ring when listening */}
-          {status === 'listening' && (
+          {effectiveStatus === 'listening' && (
             <span
               className="absolute inset-0 rounded-full border-2 border-white/80 animate-ping pointer-events-none"
               style={{ animationDuration: '1.5s' }}
@@ -112,9 +139,11 @@ export const VoiceInputBar: React.FC = () => {
           value={inputVal}
           onChange={(e) => setInputVal(e.target.value)}
           placeholder={
-            status === 'listening'
+            livekitVoice.connecting
+              ? 'Connecting realtime voice...'
+              : effectiveStatus === 'listening'
               ? 'Listening to your voice...'
-              : status === 'speaking'
+              : effectiveStatus === 'speaking'
               ? 'Fox speaking (type to interrupt)...'
               : 'Ask anything or type a prompt...'
           }
@@ -162,6 +191,11 @@ export const VoiceInputBar: React.FC = () => {
           )}
         </div>
       </form>
+      {livekitVoice.enabled && livekitVoice.error && (
+        <p className="mt-2 px-2 text-xs text-red-300" role="status">
+          Realtime voice unavailable: {livekitVoice.error}. Existing text chat is still available.
+        </p>
+      )}
     </div>
   );
 };
