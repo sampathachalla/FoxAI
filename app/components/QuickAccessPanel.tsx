@@ -100,6 +100,7 @@ export const QuickAccessPanel: React.FC<QuickAccessPanelProps> = ({ isOpen, onCl
     openToolPanel,
     enginePrefs,
     availableVoices,
+    hasDeepgramKey,
     headerQuickOptions,
     setHeaderQuickOptions,
   } = useVoiceAssistant();
@@ -560,6 +561,52 @@ export const QuickAccessPanel: React.FC<QuickAccessPanelProps> = ({ isOpen, onCl
                         className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-white"
                       />
                     </div>
+                  </div>
+                </div>
+
+                {/* 3b. TTS Engine Toggle: Deepgram Aura vs Hermes (Edge / Piper) TTS */}
+                <div className="rounded-2xl bg-white/[0.03] border border-white/[0.08] p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-bold text-white flex items-center space-x-1.5">
+                      <Mic className="w-3.5 h-3.5 text-neutral-400" />
+                      <span>Voice Engine</span>
+                    </span>
+                    {!hasDeepgramKey && (
+                      <span className="text-[9px] text-amber-400/80">No Deepgram key</span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      onClick={() => setVoicePrefs({ ...voicePrefs, provider: 'deepgram' })}
+                      disabled={!hasDeepgramKey}
+                      className={`px-2 py-2 rounded-xl text-[10px] font-bold transition-all border cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 ${
+                        voicePrefs.provider === 'deepgram' || (voicePrefs.provider === 'auto' && hasDeepgramKey)
+                          ? 'bg-cyan-500/20 border-cyan-500/40 text-white shadow-sm'
+                          : 'bg-white/[0.03] border-white/[0.06] text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      Deepgram
+                    </button>
+                    <button
+                      onClick={() => setVoicePrefs({ ...voicePrefs, provider: 'hermes-edge' })}
+                      className={`px-2 py-2 rounded-xl text-[10px] font-bold transition-all border cursor-pointer ${
+                        voicePrefs.provider === 'hermes-edge'
+                          ? 'bg-cyan-500/20 border-cyan-500/40 text-white shadow-sm'
+                          : 'bg-white/[0.03] border-white/[0.06] text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      Edge TTS
+                    </button>
+                    <button
+                      onClick={() => setVoicePrefs({ ...voicePrefs, provider: 'hermes-piper' })}
+                      className={`px-2 py-2 rounded-xl text-[10px] font-bold transition-all border cursor-pointer ${
+                        voicePrefs.provider === 'hermes-piper'
+                          ? 'bg-cyan-500/20 border-cyan-500/40 text-white shadow-sm'
+                          : 'bg-white/[0.03] border-white/[0.06] text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      Piper TTS
+                    </button>
                   </div>
                 </div>
 

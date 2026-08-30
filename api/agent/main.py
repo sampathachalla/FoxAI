@@ -6,12 +6,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from config.settings import settings
-from models.schemas import AgentRunRequest, AgentRunResponse
+from models.schemas import AgentRunRequest, AgentRunResponse, TTSSynthesizeRequest
 from agents.hermes_agent import HermesAgent
 from tools import create_default_registry
 from workflows.chat_workflow import ChatWorkflow
 from observability.tracer import AgentTracer
+from Tts import available_engines, list_engine_voices, synthesize_speech, UnsupportedTTSEngine
 
 app = FastAPI(
     title="Fox Jarvis Hermes Agent Microservice",
@@ -66,6 +68,30 @@ async def run_agent(req: AgentRunRequest):
     except Exception as e:
         print(f"[Hermes FastAPI] Execution error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/tts/engines")
+async def get_tts_engines():
+    return {"success": True, "engines": available_engines()}
+
+@app.get("/tts/voices")
+async def get_tts_voices(engine: str = "edge"):
+    try:
+        voices = await list_engine_voices(engine)
+        return {"success": True, "engine": engine, "voices": voices}
+    except UnsupportedTTSEngine as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/tts/synthesize")
+async def synthesize_tts(req: TTSSynthesizeRequest):
+    try:
+        audio_bytes, content_type = await synthesize_speech(req.text, engine=req.engine, voice=req.voice)
+        return Response(content=audio_bytes, media_type=content_type)
+    except UnsupportedTTSEngine as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

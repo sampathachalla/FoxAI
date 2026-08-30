@@ -7,6 +7,17 @@ import {
   hasDeepgramKey,
   DEEPGRAM_AURA_VOICES,
 } from '../services/deepgram.service';
+import {
+  synthesizeHermesSpeech,
+  getHermesTTSEngines,
+  getHermesTTSVoices,
+} from '../services/hermes.client';
+import {
+  checkWakeWordHealth,
+  getWakeWordWebSocketUrl,
+  isWakeWordEnabled,
+} from '../services/wakeword.client';
+import { detectToolsFromPromptAndResponse } from '../utils/toolDetection';
 import { ChatMessage } from '../models/assistant.types';
 
 export async function handleAssistantChat(req: Request, res: Response): Promise<void> {
@@ -95,6 +106,23 @@ export async function handleAssistantChat(req: Request, res: Response): Promise<
   }
 }
 
+export async function handleDetectTools(req: Request, res: Response): Promise<void> {
+  try {
+    const { prompt, responseText } = req.body;
+
+    if (!prompt || typeof prompt !== 'string') {
+      res.status(400).json({ error: 'Prompt is required and must be a string.' });
+      return;
+    }
+
+    const toolsDetected = detectToolsFromPromptAndResponse(prompt, responseText || '');
+    res.json({ success: true, toolsDetected });
+  } catch (error: any) {
+    console.error('[Aura Controller] Error in handleDetectTools:', error);
+    res.json({ success: true, toolsDetected: [] });
+  }
+}
+
 export async function handleAssistantChatStream(req: Request, res: Response): Promise<void> {
   try {
     const { prompt, history, personaPrompt, model, provider } = req.body;
@@ -171,11 +199,64 @@ export async function handleGetDeepgramVoices(req: Request, res: Response): Prom
   });
 }
 
+export async function handleHermesTTS(req: Request, res: Response): Promise<void> {
+  try {
+    const { text, engine, voice } = req.body;
+
+    if (!text || typeof text !== 'string') {
+      res.status(400).json({ error: 'Text is required for TTS synthesis.' });
+      return;
+    }
+
+    const selectedEngine: 'edge' | 'piper' = engine === 'piper' ? 'piper' : 'edge';
+    const { buffer, contentType } = await synthesizeHermesSpeech(text, selectedEngine, voice);
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', buffer.length);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.send(buffer);
+  } catch (error: any) {
+    console.error('[Hermes TTS Controller] Error in handleHermesTTS:', error);
+    res.status(503).json({
+      error: error?.message || 'Failed to synthesize voice with Hermes TTS',
+      fallback: true,
+    });
+  }
+}
+
+export async function handleGetHermesTTSEngines(req: Request, res: Response): Promise<void> {
+  try {
+    const engines = await getHermesTTSEngines();
+    res.json({ success: true, engines });
+  } catch (error: any) {
+    res.status(503).json({
+      success: false,
+      error: error?.message || 'Hermes TTS microservice unavailable',
+      engines: [],
+    });
+  }
+}
+
+export async function handleGetHermesTTSVoices(req: Request, res: Response): Promise<void> {
+  try {
+    const engine = req.query.engine === 'piper' ? 'piper' : 'edge';
+    const voices = await getHermesTTSVoices(engine);
+    res.json({ success: true, engine, voices });
+  } catch (error: any) {
+    res.status(503).json({
+      success: false,
+      error: error?.message || 'Hermes TTS microservice unavailable',
+      voices: [],
+    });
+  }
+}
+
 export async function handleSystemStatus(req: Request, res: Response): Promise<void> {
   const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY);
   const hasOAIKey = hasOpenAIKey();
   const hasLocalKey = hasLocalLlmKey();
   const hasDGKey = hasDeepgramKey();
+  const wakeWordHealth = await checkWakeWordHealth();
   
   let engineName = 'Local Intelligence Kernel';
   if (hasOAIKey) {
@@ -196,11 +277,18 @@ export async function handleSystemStatus(req: Request, res: Response): Promise<v
     hasGeminiKey: hasGeminiKey,
     hasLocalLlmKey: hasLocalKey,
     hasDeepgramKey: hasDGKey,
+    hasWakeWord: Boolean(wakeWordHealth?.ready),
+    wakeWordEnabled: isWakeWordEnabled(),
+    wakeWordServiceHealthy: Boolean(wakeWordHealth?.ready),
+    wakeWordPhrase: wakeWordHealth?.phrase || process.env.WAKEWORD_PHRASE || 'Hey Jarvis',
+    wakeWordWebSocketUrl: getWakeWordWebSocketUrl(),
+    wakeWordModelConfigured: wakeWordHealth?.modelExists || false,
+    wakeWordLoadError: wakeWordHealth?.loadError || null,
     localLlmBaseUrl: getLocalLlmBaseUrl(),
     localModels: AVAILABLE_LOCAL_MODELS,
     deepgramModel: 'aura-2-asteria-en',
     defaultModel: hasOAIKey ? 'gpt-5-nano' : hasLocalKey ? 'qwen2.5:0.5b' : 'gemini-2.0-flash',
-    supportedModals: ['text', 'voice', 'deepgram-tts', 'audio-reactive', 'system-tools', 'local-llm'],
+    supportedModals: ['text', 'voice', 'deepgram-tts', 'audio-reactive', 'system-tools', 'local-llm', 'wake-word'],
   });
 }
 

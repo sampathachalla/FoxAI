@@ -28,6 +28,13 @@ export interface AssistantStatusResponse {
   hasOpenAIKey?: boolean;
   hasGeminiKey?: boolean;
   hasDeepgramKey?: boolean;
+  hasWakeWord?: boolean;
+  wakeWordEnabled?: boolean;
+  wakeWordServiceHealthy?: boolean;
+  wakeWordPhrase?: string;
+  wakeWordWebSocketUrl?: string;
+  wakeWordModelConfigured?: boolean;
+  wakeWordLoadError?: string | null;
   deepgramModel?: string;
   supportedModals: string[];
 }
@@ -136,6 +143,25 @@ export async function streamAssistantChat(
   return () => controller.abort();
 }
 
+export async function fetchDetectTools(
+  prompt: string,
+  responseText: string
+): Promise<{ success: boolean; toolsDetected: AssistantToolCall[] }> {
+  const response = await fetch('/api/assistant/detect-tools', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ prompt, responseText }),
+  });
+
+  if (!response.ok) {
+    return { success: false, toolsDetected: [] };
+  }
+
+  return response.json();
+}
+
 export async function fetchSystemStatus(): Promise<AssistantStatusResponse> {
   const response = await fetch('/api/assistant/status');
   if (!response.ok) {
@@ -165,6 +191,45 @@ export async function fetchDeepgramVoices(): Promise<DeepgramVoicesResponse> {
   const response = await fetch('/api/assistant/voices');
   if (!response.ok) {
     throw new Error('Failed to fetch Deepgram voices list');
+  }
+  return response.json();
+}
+
+export async function fetchHermesTTS(
+  text: string,
+  engine: 'edge' | 'piper' = 'edge',
+  voice?: string
+): Promise<Blob> {
+  const response = await fetch('/api/assistant/hermes-tts', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ text, engine, voice }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: 'Hermes TTS synthesis failed' }));
+    throw new Error(err.error || `Hermes TTS synthesis failed with status ${response.status}`);
+  }
+
+  return response.blob();
+}
+
+export async function fetchHermesTTSEngines(): Promise<{ success: boolean; engines: any[] }> {
+  const response = await fetch('/api/assistant/hermes-tts/engines');
+  if (!response.ok) {
+    throw new Error('Failed to fetch Hermes TTS engines');
+  }
+  return response.json();
+}
+
+export async function fetchHermesTTSVoices(
+  engine: 'edge' | 'piper' = 'edge'
+): Promise<{ success: boolean; engine: string; voices: any[] }> {
+  const response = await fetch(`/api/assistant/hermes-tts/voices?engine=${encodeURIComponent(engine)}`);
+  if (!response.ok) {
+    throw new Error('Failed to fetch Hermes TTS voices');
   }
   return response.json();
 }

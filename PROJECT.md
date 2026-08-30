@@ -1,78 +1,76 @@
-# Project: Fox AI Multi-Shape 3D Audio-Reactive Visualizer & Settings Selector
+# Project: Notion-Feel Notes Tool for Fox Assistant
 
 ## Architecture
-- **Rendering Layer**: Procedural 3D Canvas 2D perspective engine in `app/components/FloatingOrb.tsx` supporting 5 distinct geometries (Sphere, Torus, Icosahedron, Helix, Tesseract), depth sorting, audio displacement physics, momentum decay, and color theme gradients.
-- **State & Context Layer**: `app/store/assistantContext.tsx` holds `coreShape` state and provides `setCoreShape()`, consuming real-time audio streams (`audioLevel`, `frequencyData`), theme accents, and assistant state (`status`).
-- **Storage Layer**: `app/services/storage.ts` provides `fox_core_shape_preference` persistence with fallback defaults and storage error resilience.
-- **UI Layer**: `app/components/SettingsView.tsx` renders the "3D Intelligence Core Shape" card selector in the "Theme & Appearance" tab with animated icons, descriptions, and 1-click active state indicators.
-- **Testing Layer**: Multi-tiered unit and E2E testing suite validating shapes, audio reactivity, drag physics, settings interaction, and localStorage persistence.
+- **Component Root**: `/Users/sampath/Desktop/fox-jarvis-inspiration/app/components/notse`
+- **Data Flow**:
+  - `NotesWorkspace.tsx` manages dual view modes (`gallery` vs `editor`), active note selection, full-text search, and multi-tag filtering.
+  - Bidirectional State Synchronization: Notes state is stored in `localStorage` under `fox_documents_v1` (rich block structure) & synced with `fox_notes_v1` / `AssistantContext.notes` (Markdown-serialized string `content` + metadata) so voice commands seamlessly populate the Notion workspace.
+  - `NoteEditor.tsx` renders editable emoji header, auto-resizing title, tag badges, auto-save indicator, and block stream (`BlockItem.tsx`).
+  - `BlockItem.tsx` handles polymorphic rendering and keyboard state machine (`Enter` to split/new block, `Backspace` to convert/delete, arrow navigation, interactive to-do checkboxes, code blocks with copy & language badges, callout icon containers, quotes, dividers).
+  - `SlashMenu.tsx` provides quick `/` command palette with fuzzy filtering and keyboard navigation (`ArrowUp`/`ArrowDown`/`Enter`/`Escape`).
+  - `NotesGallery.tsx` displays Notion-style note cards with emoji, snippet previews, tag pills, timestamps, and search/filter controls.
+  - `ToolsManagerView.tsx` mounts `<NotesWorkspace />` replacing the legacy notes tab.
+
+## Code Layout
+```
+app/
+├── components/
+│   ├── notse/
+│   │   ├── notseTypes.ts        # Type contracts (BlockType, NoteBlock, NoteDocument, SlashMenuItemDef)
+│   │   ├── markdownUtils.ts     # Bidirectional serialization (blocks <-> Markdown string, export)
+│   │   ├── EmojiPicker.tsx      # Categorized emoji popover with search filter
+│   │   ├── TagBadge.tsx         # Tag badge pill with color theming & remove/filter actions
+│   │   ├── SlashMenu.tsx        # Floating slash command menu with keyboard navigation
+│   │   ├── BlockItem.tsx        # Polymorphic block editor (headings, todos, code, callout, quote, divider, paragraph)
+│   │   ├── NoteEditor.tsx       # Distraction-free Notion-feel document canvas & header controls
+│   │   ├── NotesGallery.tsx     # Notion card grid, real-time search bar & tag filter bar
+│   │   ├── NotesWorkspace.tsx   # Top-level workspace router & state coordinator
+│   │   └── index.ts             # Clean barrel exports
+│   ├── ToolsManagerView.tsx     # Upgraded to mount <NotesWorkspace />
+│   └── ...
+├── store/
+│   └── assistantContext.tsx     # Voice notes integration and sync
+└── types/
+    └── index.ts                 # NoteItem type extension if applicable
+```
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | Core Shape Type & Metadata | `CoreShapeId` union, metadata constants, descriptions, and icons | M1 | ORIGINAL_REQUEST §R1, R2 |
-| 2 | Storage Persistence | `fox_core_shape_preference` in `storage.ts` with load/save | M1 | ORIGINAL_REQUEST §R2 |
-| 3 | State & Context Sync | `coreShape` & `setCoreShape` in `assistantContext.tsx` | M1 | ORIGINAL_REQUEST §R2 |
-| 4 | Quantum Torus Visualizer | Procedural torus geometry, particle streams, orbital rings, audio wave | M2 | ORIGINAL_REQUEST §R1 |
-| 5 | Cyber Icosahedron Visualizer | Holographic crystal icosahedron, vertices, facet edges, audio pulse | M2 | ORIGINAL_REQUEST §R1 |
-| 6 | Neural DNA Helix Visualizer | Dual braided particle waves, base pair rungs, audio undulation | M2 | ORIGINAL_REQUEST §R1 |
-| 7 | Hypercube / Tesseract Visualizer | 4D-to-3D projected rotating nested cube lattices, audio scaling | M2 | ORIGINAL_REQUEST §R1 |
-| 8 | Holographic Sphere Compatibility | Full backward compatibility for existing sphere core | M2 | ORIGINAL_REQUEST §R1 |
-| 9 | Multi-State & Theme Adaptation | Organic response to idle/listening/thinking/speaking and theme colors | M2 | ORIGINAL_REQUEST §R1 |
-| 10 | Drag-to-Rotate Momentum Decay | Mouse drag pitch/yaw with smooth momentum decay (~0.94 friction) | M2 | ORIGINAL_REQUEST §R1, AC |
-| 11 | Settings UI 3D Core Shape Selector | "3D Intelligence Core Shape" section under Theme & Appearance tab | M3 | ORIGINAL_REQUEST §R2 |
-| 12 | Live 1-Click Switching Sync | Instant visualizer update in Voice Stage and Settings preview | M3 | ORIGINAL_REQUEST §R2 |
-| 13 | E2E Verification & Hardening | Complete Tiers 1-4 E2E test pass + Tier 5/6 adversarial hardening | M4 | ORIGINAL_REQUEST §AC |
+| 1 | Block Data Model & Contracts | 11 block types (Paragraph, H1, H2, H3, To-do, Bullet, Numbered, Code, Callout, Quote, Divider) and Document models | M1 | survey |
+| 2 | Markdown Bidirectional Serializer | Convert between `NoteBlock[]` and Markdown string, export `.md` file download | M1 | survey |
+| 3 | Emoji Picker & Tag Badge Components | Categorized emoji popover with search, colored tag badges with remove/filter | M2 | survey |
+| 4 | Slash Command Palette (`/`) | Floating `/` command menu with fuzzy search, keyboard navigation (`Up`/`Down`/`Enter`/`Esc`) | M2 | survey |
+| 5 | Polymorphic Block Renderer & Keyboard Engine | Interactive checkboxes, code snippet copy, callouts, quotes, Enter/Backspace state transitions | M2 | survey |
+| 6 | Notion-Feel Document Editor Canvas | Auto-resizing title, page emoji, tag manager, auto-save status pill ("Saved"/"Saving..."), Markdown export, AI chat trigger | M3 | survey |
+| 7 | Notes Gallery & Card Grid | Notion-style card grid with emoji, snippet previews, tag pills, last modified timestamps, hover actions (dup/delete/export) | M3 | survey |
+| 8 | Real-Time Full-Text Search & Multi-Tag Filtering | Multi-field instant search across titles, contents, tags, and category tag filter pills | M3 | survey |
+| 9 | ToolsManagerView & Assistant Voice Sync Integration | Clean integration with `ToolsManagerView.tsx`, bidirectional sync with `AssistantContext.notes` & `fox_documents_v1` / `fox_notes_v1` | M4 | survey |
+| 10 | Comprehensive Test Suite & Adversarial Hardening | Unit & E2E verification test suite (Tiers 1-4) + adversarial validation (Tier 5) passing `npm run build` | M5 | survey |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | Core Types, Storage & State Context | `app/types/index.ts`, `app/services/storage.ts`, `app/store/assistantContext.tsx` | none | DONE |
-| M2 | Multi-Shape 3D Audio-Reactive Engine | `app/components/FloatingOrb.tsx` | M1 | DONE |
-| M3 | Settings UI 3D Shape Selector | `app/components/SettingsView.tsx` | M1 | DONE |
-| M4 | Final E2E Test Pass & Adversarial Hardening | Verification across all 5 shapes, Settings UI, and storage persistence | M1, M2, M3, E2E | DONE |
+| 1 | Core Block Model & Serialization Engine | `notseTypes.ts`, `markdownUtils.ts` | none | DONE |
+| 2 | Modular Editor Sub-Components | `EmojiPicker.tsx`, `TagBadge.tsx`, `SlashMenu.tsx`, `BlockItem.tsx` | M1 | IN_PROGRESS |
+| 3 | Notion Document Canvas & Notes Gallery | `NoteEditor.tsx`, `NotesGallery.tsx`, `NotesWorkspace.tsx`, `index.ts` | M2 | PLANNED |
+| 4 | ToolsManagerView & Assistant Voice Sync Integration | `ToolsManagerView.tsx`, `assistantContext.tsx` integration | M3 | PLANNED |
+| 5 | Dual-Track Testing & Build Verification | Full test suite execution, adversarial coverage, `npm run build` verification | M4 | PLANNED |
 
 ## Interface Contracts
-### `app/types/index.ts`
-```typescript
-export type CoreShapeId = 'sphere' | 'torus' | 'icosahedron' | 'helix' | 'tesseract';
 
-export interface CoreShapeConfig {
-  id: CoreShapeId;
-  name: string;
-  tagline: string;
-  description: string;
-  iconName: string;
-  particleCount: number;
-}
-```
+### `app/components/notse/notseTypes.ts`
+- `BlockType = 'paragraph' | 'h1' | 'h2' | 'h3' | 'todo' | 'bullet' | 'number' | 'code' | 'callout' | 'quote' | 'divider'`
+- `NoteBlock { id: string; type: BlockType; content: string; completed?: boolean; language?: string; calloutIcon?: string; }`
+- `NoteDocument { id: string; title: string; emoji: string; blocks: NoteBlock[]; tags: string[]; createdAt: number; updatedAt: number; pinned?: boolean; }`
+- `AutoSaveStatus = 'saved' | 'saving' | 'unsaved'`
+- `NotesViewMode = 'gallery' | 'editor'`
 
-### `app/services/storage.ts`
-```typescript
-export const STORAGE_KEYS = {
-  // ... existing keys
-  CORE_SHAPE: 'fox_core_shape_preference',
-};
+### `app/components/notse/markdownUtils.ts`
+- `blocksToMarkdown(blocks: NoteBlock[], title?: string): string`
+- `markdownToBlocks(markdown: string): NoteBlock[]`
+- `exportNoteAsMarkdownFile(doc: NoteDocument): void`
+- `createDefaultBlock(): NoteBlock`
 
-export class StorageService {
-  static loadCoreShape(fallback: CoreShapeId = 'sphere'): CoreShapeId;
-  static saveCoreShape(shape: CoreShapeId): void;
-}
-```
-
-### `app/store/assistantContext.tsx`
-```typescript
-export interface AssistantContextType {
-  // ... existing fields
-  coreShape: CoreShapeId;
-  setCoreShape: (shape: CoreShapeId) => void;
-}
-```
-
-## Code Layout
-- `app/types/index.ts`: Shared TypeScript types, constants, and `CORE_SHAPES` metadata.
-- `app/services/storage.ts`: Persistence service wrapping `localStorage`.
-- `app/store/assistantContext.tsx`: React Context providing reactive state and synchronization.
-- `app/components/FloatingOrb.tsx`: Procedural 3D Canvas visualizer engine.
-- `app/components/SettingsView.tsx`: Settings modal view with Theme & Appearance tab.
-- `tests/`: 6-tiered automated E2E, unit, boundary, combinatorial, and stress test suites.
+### `app/components/notse/NotesWorkspace.tsx`
+- Props: `{ initialNoteId?: string; onDiscussWithAI?: (content: string) => void; className?: string; }`

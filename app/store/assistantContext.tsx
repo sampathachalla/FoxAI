@@ -20,10 +20,20 @@ import {
   EngineTelemetry,
   VoiceTelemetry,
   CoreShapeId,
+  WakeWordState,
 } from '../types';
 import { StorageService } from '../services/storage';
-import { fetchAssistantChat, fetchDeepgramTTS, fetchDeepgramVoices, fetchSystemStatus } from '../services/api';
-import { AudioAnalyserService, SpeechVisualizerSimulator } from '../utils/audio';
+import {
+  fetchAssistantChat,
+  streamAssistantChat,
+  fetchDetectTools,
+  fetchDeepgramTTS,
+  fetchDeepgramVoices,
+  fetchHermesTTS,
+  fetchSystemStatus,
+} from '../services/api';
+import { WakeWordStreamService } from '../services/wakeWord';
+import { AudioAnalyserService, SpeechVisualizerSimulator, SoundFXService } from '../utils/audio';
 import {
   SpeechRecognitionService,
   SpeechSynthesisService,
@@ -49,6 +59,10 @@ interface AssistantContextType {
   deepgramVoices: DeepgramVoiceItem[];
   hasDeepgramKey: boolean;
   isSynthesizingTTS: boolean;
+  wakeWordState: WakeWordState;
+  wakeWordServiceHealthy: boolean;
+  wakeWordPhrase: string;
+  wakeWordLoadError: string | null;
   
   // App View Modes (Voice 3D Core vs ChatGPT-Style Chat vs Settings View Page vs Tools Panel View)
   appMode: AppMode;
@@ -102,7 +116,7 @@ interface AssistantContextType {
   stopListening: () => void;
   toggleListening: () => void;
   cancelSpeaking: () => void;
-  speakText: (text: string) => Promise<void>;
+  speakText: (text: string, onProgress?: (revealedText: string) => void, options?: { suppressAutoListen?: boolean }) => Promise<void>;
   addReminder: (title: string, dueTime?: string, priority?: 'low' | 'medium' | 'high') => void;
   toggleReminder: (id: string) => void;
   deleteReminder: (id: string) => void;
@@ -207,11 +221,24 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [speakingTranscript, setSpeakingTranscript] = useState<string>('');
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [voicePrefs, setVoicePrefsState] = useState<VoicePreference>(() => StorageService.loadVoicePreferences());
+  // Mirrors voicePrefs synchronously (React state updates are not synchronous, so a
+  // caller that calls setVoicePrefs() and then immediately triggers speech in the same
+  // event handler — e.g. a voice-preview button — would otherwise read the OLD value
+  // through the still-current-render's closure). TTS functions read from this ref
+  // instead of the voicePrefs variable directly, so they always see the latest choice.
+  const voicePrefsRef = useRef<VoicePreference>(voicePrefs);
   const [deviceSettings, setDeviceSettingsState] = useState<DeviceSettingState>(() => StorageService.loadDeviceSettings());
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [deepgramVoices, setDeepgramVoices] = useState<DeepgramVoiceItem[]>([]);
   const [hasDeepgramKey, setHasDeepgramKey] = useState<boolean>(false);
   const [isSynthesizingTTS, setIsSynthesizingTTS] = useState<boolean>(false);
+  const [wakeWordState, setWakeWordState] = useState<WakeWordState>(
+    deviceSettings.wakeWordEnabled ? 'arming' : 'disabled'
+  );
+  const [wakeWordServiceHealthy, setWakeWordServiceHealthy] = useState<boolean>(false);
+  const [wakeWordPhrase, setWakeWordPhrase] = useState<string>('Hey Jarvis');
+  const [wakeWordLoadError, setWakeWordLoadError] = useState<string | null>(null);
+  const [wakeWordWebSocketUrl, setWakeWordWebSocketUrl] = useState<string | null>(null);
 
   // Telemetry state
   const [engineTelemetry, setEngineTelemetry] = useState<EngineTelemetry>(() => StorageService.loadEngineTelemetry());
@@ -229,10 +256,26 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const speechRecRef = useRef<SpeechRecognitionService>(new SpeechRecognitionService());
   const speechSynthRef = useRef<SpeechSynthesisService>(new SpeechSynthesisService());
   const deepgramAudioRef = useRef<DeepgramAudioService>(new DeepgramAudioService());
+  const wakeWordRef = useRef<WakeWordStreamService>(new WakeWordStreamService());
+  const wakeWordConnectingRef = useRef<boolean>(false);
+  const wakeWordActiveUrlRef = useRef<string | null>(null);
   const isSpeechFinalDispatchedRef = useRef<boolean>(false);
   const isSendingMessageRef = useRef<boolean>(false);
   const startListeningRef = useRef<() => void>(() => {});
   const autoListenTimerRef = useRef<any>(null);
+
+  // Incremental (sentence-by-sentence) TTS streaming queue
+  const speechSessionRef = useRef<number>(0);
+  const sentenceQueueRef = useRef<{ text: string; audioPromise: Promise<Blob | null> }[]>([]);
+  const queueDrainingRef = useRef<boolean>(false);
+  // Resolver for whichever playSentence() call is currently in flight. DeepgramAudioService's
+  // stop()/pause() never fires the 'ended' event, so if playback gets interrupted from
+  // outside the drain loop's own sequence (cancelSpeaking() called for any reason — a new
+  // message starting, a voice preview elsewhere, starting to listen again), the pending
+  // playSentence() promise would otherwise hang forever, permanently wedging the queue
+  // (queueDrainingRef never resets) and leaving status stuck non-idle. cancelSpeaking()
+  // calls this directly to force that promise to resolve instead of leaking a hang.
+  const pendingPlaybackResolveRef = useRef<(() => void) | null>(null);
 
   // Persistence effects
   useEffect(() => {
@@ -256,41 +299,45 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [notes]);
 
   // Load Deepgram voices and system key status
+  const refreshSystemCapabilities = useCallback(async () => {
+    try {
+      const [voicesRes, statusRes] = await Promise.allSettled([
+        fetchDeepgramVoices(),
+        fetchSystemStatus(),
+      ]);
+
+      if (voicesRes.status === 'fulfilled' && voicesRes.value.voices) {
+        setDeepgramVoices(voicesRes.value.voices);
+        if (voicesRes.value.hasApiKey) {
+          setHasDeepgramKey(true);
+        }
+      }
+
+      if (statusRes.status === 'fulfilled') {
+        if (statusRes.value.hasDeepgramKey) {
+          setHasDeepgramKey(true);
+        }
+        setWakeWordServiceHealthy(Boolean(statusRes.value.wakeWordServiceHealthy));
+        setWakeWordPhrase(statusRes.value.wakeWordPhrase || 'Hey Jarvis');
+        setWakeWordWebSocketUrl(statusRes.value.wakeWordWebSocketUrl || null);
+        setWakeWordLoadError(statusRes.value.wakeWordLoadError || null);
+      }
+    } catch (err) {
+      console.warn('[AssistantContext] System capability check:', err);
+    }
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
 
-    async function checkDeepgramStatus() {
-      try {
-        const [voicesRes, statusRes] = await Promise.allSettled([
-          fetchDeepgramVoices(),
-          fetchSystemStatus(),
-        ]);
-
-        if (!isMounted) return;
-
-        if (voicesRes.status === 'fulfilled' && voicesRes.value.voices) {
-          setDeepgramVoices(voicesRes.value.voices);
-          if (voicesRes.value.hasApiKey) {
-            setHasDeepgramKey(true);
-          }
-        }
-
-        if (statusRes.status === 'fulfilled') {
-          if (statusRes.value.hasDeepgramKey) {
-            setHasDeepgramKey(true);
-          }
-        }
-      } catch (err) {
-        console.warn('[AssistantContext] Deepgram status check:', err);
-      }
-    }
-
-    checkDeepgramStatus();
+    refreshSystemCapabilities().finally(() => {
+      if (!isMounted) return;
+    });
 
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [refreshSystemCapabilities]);
 
   // Load browser web speech voices
   useEffect(() => {
@@ -325,6 +372,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const setVoicePrefs = (prefs: VoicePreference) => {
+    voicePrefsRef.current = prefs;
     setVoicePrefsState(prefs);
     StorageService.saveVoicePreferences(prefs);
   };
@@ -374,6 +422,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const cancelSpeaking = useCallback(() => {
+    speechSessionRef.current += 1;
+    sentenceQueueRef.current = [];
     clearTimeout(autoListenTimerRef.current);
     speechSynthRef.current.stop();
     deepgramAudioRef.current.stop();
@@ -383,6 +433,15 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setSpeakingTranscript('');
     setIsSynthesizingTTS(false);
     setStatus('idle');
+
+    // Force-resolve any playSentence() promise left hanging by the stop() calls above —
+    // pause() never fires 'ended', so without this the drain loop for whatever was
+    // playing would never reach its finally block, permanently wedging the queue.
+    if (pendingPlaybackResolveRef.current) {
+      const resolvePending = pendingPlaybackResolveRef.current;
+      pendingPlaybackResolveRef.current = null;
+      resolvePending();
+    }
   }, []);
 
   // --- Session Management (Gemini & ChatGPT Style) ---
@@ -488,17 +547,17 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const fallbackWebSpeech = useCallback(
-    (text: string, onProgress?: (revealedText: string) => void) => {
+    (text: string, onProgress?: (revealedText: string) => void, suppressAutoListen?: boolean) => {
       // Keep status as 'thinking' until speech actually begins
       setStatus('thinking');
       setAudioLevel(0);
       setFrequencyData(null);
 
       const spoke = speechSynthRef.current.speak(text, {
-        voiceURI: voicePrefs.voiceURI,
-        pitch: voicePrefs.pitch,
-        rate: voicePrefs.rate,
-        volume: voicePrefs.volume,
+        voiceURI: voicePrefsRef.current.voiceURI,
+        pitch: voicePrefsRef.current.pitch,
+        rate: voicePrefsRef.current.rate,
+        volume: voicePrefsRef.current.volume,
         onStart: () => {
           setStatus('speaking');
           speechSimulatorRef.current.start((simLevel) => {
@@ -519,10 +578,12 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           setSpeakingTranscript('');
           setStatus('idle');
 
-          clearTimeout(autoListenTimerRef.current);
-          autoListenTimerRef.current = setTimeout(() => {
-            startListeningRef.current?.();
-          }, 350);
+          if (!suppressAutoListen) {
+            clearTimeout(autoListenTimerRef.current);
+            autoListenTimerRef.current = setTimeout(() => {
+              startListeningRef.current?.();
+            }, 350);
+          }
         },
         onError: () => {
           onProgress?.(text);
@@ -547,8 +608,14 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   );
 
   const speakText = useCallback(
-    async (text: string, onProgress?: (revealedText: string) => void) => {
-      if (!voicePrefs.autoSpeak) {
+    async (
+      text: string,
+      onProgress?: (revealedText: string) => void,
+      options?: { suppressAutoListen?: boolean }
+    ) => {
+      const suppressAutoListen = options?.suppressAutoListen;
+
+      if (!voicePrefsRef.current.autoSpeak) {
         onProgress?.(text);
         setStatus('idle');
         setSpeakingTranscript('');
@@ -568,23 +635,31 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setAudioLevel(0);
       setFrequencyData(null);
 
-      // Determine whether to use Deepgram Aura TTS or fallback to browser Web Speech API
+      // Determine which cloud/local audio-synthesis engine to use, or fall back to browser Web Speech API
+      const provider = voicePrefsRef.current.provider;
+      const isHermesEdge = provider === 'hermes-edge';
+      const isHermesPiper = provider === 'hermes-piper';
       const shouldUseDeepgram =
-        (voicePrefs.provider === 'deepgram' ||
-          (voicePrefs.provider !== 'webspeech' && hasDeepgramKey)) &&
+        (provider === 'deepgram' || (provider !== 'webspeech' && !isHermesEdge && !isHermesPiper && hasDeepgramKey)) &&
         hasDeepgramKey;
 
-      if (shouldUseDeepgram) {
+      if (shouldUseDeepgram || isHermesEdge || isHermesPiper) {
         setIsSynthesizingTTS(true);
+        const engineLabel = shouldUseDeepgram ? 'Deepgram TTS' : 'Hermes TTS';
 
         try {
-          const selectedVoice = voicePrefs.deepgramVoice || 'aura-2-asteria-en';
-          const audioBlob = await fetchDeepgramTTS(text, selectedVoice);
+          const audioBlob = shouldUseDeepgram
+            ? await fetchDeepgramTTS(text, voicePrefsRef.current.deepgramVoice || 'aura-2-asteria-en')
+            : await fetchHermesTTS(
+                text,
+                isHermesPiper ? 'piper' : 'edge',
+                isHermesPiper ? voicePrefsRef.current.hermesPiperVoice : voicePrefsRef.current.hermesEdgeVoice
+              );
           setIsSynthesizingTTS(false);
 
           const played = await deepgramAudioRef.current.speak(audioBlob, text, {
-            volume: voicePrefs.volume,
-            rate: voicePrefs.rate,
+            volume: voicePrefsRef.current.volume,
+            rate: voicePrefsRef.current.rate,
             onStart: () => {
               // Switch to speaking ONLY when audio actually starts playing
               setStatus('speaking');
@@ -606,32 +681,198 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               setSpeakingTranscript('');
               setStatus('idle');
 
-              clearTimeout(autoListenTimerRef.current);
-              autoListenTimerRef.current = setTimeout(() => {
-                startListeningRef.current?.();
-              }, 350);
+              if (!suppressAutoListen) {
+                clearTimeout(autoListenTimerRef.current);
+                autoListenTimerRef.current = setTimeout(() => {
+                  startListeningRef.current?.();
+                }, 350);
+              }
             },
             onError: (err) => {
-              console.warn('[Deepgram TTS] Playback error, falling back to Web Speech:', err);
-              fallbackWebSpeech(text, onProgress);
+              console.warn(`[${engineLabel}] Playback error, falling back to Web Speech:`, err);
+              fallbackWebSpeech(text, onProgress, suppressAutoListen);
             },
           });
 
           if (!played) {
-            fallbackWebSpeech(text, onProgress);
+            fallbackWebSpeech(text, onProgress, suppressAutoListen);
           }
           return;
         } catch (err) {
-          console.warn('[Deepgram TTS] Synthesis error, falling back to Web Speech:', err);
+          console.warn(`[${engineLabel}] Synthesis error, falling back to Web Speech:`, err);
           setIsSynthesizingTTS(false);
-          fallbackWebSpeech(text, onProgress);
+          fallbackWebSpeech(text, onProgress, suppressAutoListen);
           return;
         }
       }
 
-      fallbackWebSpeech(text, onProgress);
+      fallbackWebSpeech(text, onProgress, suppressAutoListen);
     },
     [voicePrefs, hasDeepgramKey, cancelSpeaking, fallbackWebSpeech]
+  );
+
+  // Synthesizes one sentence's audio ahead of time. Returns null to signal "use the
+  // browser's Web Speech engine for this sentence" (e.g. provider is webspeech, or the
+  // cloud engine failed) rather than throwing, so prefetching never rejects the queue.
+  const synthesizeSentenceAudio = useCallback(
+    async (text: string): Promise<Blob | null> => {
+      const provider = voicePrefsRef.current.provider;
+      const isHermesEdge = provider === 'hermes-edge';
+      const isHermesPiper = provider === 'hermes-piper';
+      const shouldUseDeepgram =
+        (provider === 'deepgram' || (provider !== 'webspeech' && !isHermesEdge && !isHermesPiper && hasDeepgramKey)) &&
+        hasDeepgramKey;
+
+      if (!shouldUseDeepgram && !isHermesEdge && !isHermesPiper) {
+        return null;
+      }
+
+      try {
+        if (shouldUseDeepgram) {
+          return await fetchDeepgramTTS(text, voicePrefsRef.current.deepgramVoice || 'aura-2-asteria-en');
+        }
+        return await fetchHermesTTS(
+          text,
+          isHermesPiper ? 'piper' : 'edge',
+          isHermesPiper ? voicePrefsRef.current.hermesPiperVoice : voicePrefsRef.current.hermesEdgeVoice
+        );
+      } catch (err) {
+        console.warn('[Streaming TTS] Sentence synthesis failed, falling back to Web Speech:', err);
+        return null;
+      }
+    },
+    [hasDeepgramKey]
+  );
+
+  // Plays one sentence (a pre-synthesized blob, or the browser voice if blob is null)
+  // and resolves once playback actually ends.
+  const playSentence = useCallback(
+    (text: string, audioBlob: Blob | null): Promise<void> => {
+      return new Promise((resolve) => {
+        // Wrap resolve so it can be triggered externally (by cancelSpeaking, via
+        // pendingPlaybackResolveRef) if playback gets interrupted rather than ending
+        // naturally — DeepgramAudioService.stop()/pause() never fires 'ended', so without
+        // this escape hatch an interruption would leave this promise pending forever.
+        const finish = () => {
+          if (pendingPlaybackResolveRef.current === finish) {
+            pendingPlaybackResolveRef.current = null;
+          }
+          resolve();
+        };
+        pendingPlaybackResolveRef.current = finish;
+
+        const speakWithWebSpeech = () => {
+          const spoke = speechSynthRef.current.speak(text, {
+            voiceURI: voicePrefsRef.current.voiceURI,
+            pitch: voicePrefsRef.current.pitch,
+            rate: voicePrefsRef.current.rate,
+            volume: voicePrefsRef.current.volume,
+            onStart: () => {
+              setStatus('speaking');
+            },
+            onSubtitle: (subtitle) => {
+              setSpeakingTranscript(subtitle);
+            },
+            onEnd: () => finish(),
+            onError: () => finish(),
+          });
+          if (!spoke) finish();
+        };
+
+        if (!audioBlob) {
+          speakWithWebSpeech();
+          return;
+        }
+
+        deepgramAudioRef.current
+          .speak(audioBlob, text, {
+            volume: voicePrefsRef.current.volume,
+            rate: voicePrefsRef.current.rate,
+            onStart: () => {
+              setStatus('speaking');
+            },
+            onLevel: (level, freqData) => {
+              setAudioLevel(level);
+              setFrequencyData(freqData);
+            },
+            onSubtitle: (subtitle) => {
+              setSpeakingTranscript(subtitle);
+            },
+            onEnd: () => finish(),
+            onError: () => speakWithWebSpeech(),
+          })
+          .then((played) => {
+            if (!played) speakWithWebSpeech();
+          });
+      });
+    },
+    [voicePrefs]
+  );
+
+  // Drains the sentence queue one at a time. Each item's audio was already kicked off
+  // (prefetched) when it was enqueued, so by the time we reach it here it usually only
+  // needs to await a promise that's already resolved (or close to it) — this is what
+  // hides TTS network latency behind the previous sentence's playback.
+  const drainSpeechQueue = useCallback(
+    async (sessionToken: number) => {
+      if (queueDrainingRef.current) return;
+      queueDrainingRef.current = true;
+
+      try {
+        while (sentenceQueueRef.current.length > 0) {
+          if (speechSessionRef.current !== sessionToken) {
+            sentenceQueueRef.current = [];
+            break;
+          }
+
+          const item = sentenceQueueRef.current.shift()!;
+          setIsSynthesizingTTS(true);
+          let blob: Blob | null = null;
+          try {
+            blob = await item.audioPromise;
+          } catch {
+            blob = null;
+          }
+          setIsSynthesizingTTS(false);
+
+          if (speechSessionRef.current !== sessionToken) {
+            sentenceQueueRef.current = [];
+            break;
+          }
+
+          await playSentence(item.text, blob);
+        }
+      } finally {
+        queueDrainingRef.current = false;
+        if (speechSessionRef.current === sessionToken) {
+          setAudioLevel(0);
+          setFrequencyData(null);
+          setSpeakingTranscript('');
+          setIsSynthesizingTTS(false);
+          setStatus('idle');
+
+          clearTimeout(autoListenTimerRef.current);
+          autoListenTimerRef.current = setTimeout(() => {
+            startListeningRef.current?.();
+          }, 350);
+        }
+      }
+    },
+    [playSentence]
+  );
+
+  // Enqueues one sentence for incremental playback and immediately starts synthesizing
+  // its audio in the background (prefetch), without waiting for its turn in the queue.
+  const enqueueSpeechSentence = useCallback(
+    (text: string, sessionToken: number) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+
+      const audioPromise = synthesizeSentenceAudio(trimmed);
+      sentenceQueueRef.current.push({ text: trimmed, audioPromise });
+      drainSpeechQueue(sessionToken);
+    },
+    [synthesizeSentenceAudio, drainSpeechQueue]
   );
 
   const handleToolExecutions = useCallback(
@@ -702,20 +943,24 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       );
 
       try {
-        const response = await fetchAssistantChat(
-          cleanPrompt,
-          messages,
-          enginePrefs.systemPrompt,
-          enginePrefs.model,
-          enginePrefs.provider
-        );
-        if (response.success && response.data) {
+        if (!voicePrefs.autoSpeak) {
+          // Voice output disabled: unchanged blocking request, reveal entire text immediately
+          const response = await fetchAssistantChat(
+            cleanPrompt,
+            messages,
+            enginePrefs.systemPrompt,
+            enginePrefs.model,
+            enginePrefs.provider
+          );
+          if (!response.success || !response.data) {
+            throw new Error(response.error || 'Failed to get response');
+          }
+
           const msgId = 'ast_' + Date.now();
           const fullText = response.data.text;
           const toolsDetected = response.data.toolsDetected;
           const sources = response.data.sources;
 
-          // Record Engine Tokens & Telemetry
           if (response.data.tokens) {
             const updatedEngine = StorageService.recordEngineUsage(
               response.data.tokens.inputTokens || 0,
@@ -735,72 +980,152 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             handleToolExecutions(toolsDetected);
           }
 
-          if (!voicePrefs.autoSpeak) {
-            // Voice output disabled: reveal entire text immediately
-            const assistantMsg: ChatMessage = {
-              id: msgId,
-              role: 'assistant',
-              content: fullText,
-              timestamp: Date.now(),
-              tools: toolsDetected,
-              sources: sources,
-            };
-            setMessages([...updatedWithUser, assistantMsg]);
-            setSessions((prev) =>
-              prev.map((s) =>
-                s.id === activeSessionId
-                  ? { ...s, updatedAt: Date.now(), messages: [...(s.messages || []), assistantMsg] }
-                  : s
-              )
-            );
-            setStatus('idle');
-            return;
-          }
-
-          // Voice output enabled: Stream text synchronously with Deepgram audio speech playback!
-          const initialStreamingMsg: ChatMessage = {
+          const assistantMsg: ChatMessage = {
             id: msgId,
             role: 'assistant',
-            content: '',
+            content: fullText,
             timestamp: Date.now(),
             tools: toolsDetected,
             sources: sources,
-            isStreaming: true,
           };
+          setMessages([...updatedWithUser, assistantMsg]);
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === activeSessionId
+                ? { ...s, updatedAt: Date.now(), messages: [...(s.messages || []), assistantMsg] }
+                : s
+            )
+          );
+          setStatus('idle');
+          return;
+        }
 
-          setMessages([...updatedWithUser, initialStreamingMsg]);
+        // Voice output enabled: stream the LLM response token-by-token, and start speaking
+        // each sentence as soon as it's complete instead of waiting for the whole reply.
+        // cancelSpeaking() resets status to 'idle' as a side effect, so restore 'thinking'
+        // right after — otherwise the UI briefly shows the idle "How can I assist you?"
+        // screen instead of the thinking indicator while the stream connects.
+        cancelSpeaking();
+        setStatus('thinking');
+        const sessionToken = speechSessionRef.current;
 
-          const updateMessageText = (revealed: string, isDone = false) => {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === msgId ? { ...m, content: revealed, isStreaming: !isDone } : m
+        const msgId = 'ast_' + Date.now();
+        const initialStreamingMsg: ChatMessage = {
+          id: msgId,
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          isStreaming: true,
+        };
+        setMessages([...updatedWithUser, initialStreamingMsg]);
+
+        const updateMessageText = (revealed: string, isDone = false) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === msgId ? { ...m, content: revealed, isStreaming: !isDone } : m
+            )
+          );
+          setSessions((prev) =>
+            prev.map((s) => {
+              if (s.id === activeSessionId) {
+                return {
+                  ...s,
+                  previewText: revealed,
+                  updatedAt: Date.now(),
+                  messages: (s.messages || []).map((m) =>
+                    m.id === msgId ? { ...m, content: revealed, isStreaming: !isDone } : m
+                  ),
+                };
+              }
+              return s;
+            })
+          );
+        };
+
+        let fullText = '';
+        let sentenceBuffer = '';
+        const SENTENCE_RE = /[^.!?\n]*[.!?\n]+\s*/g;
+
+        await new Promise<void>((resolveStream) => {
+          streamAssistantChat(
+            cleanPrompt,
+            messages,
+            enginePrefs.systemPrompt,
+            (chunk) => {
+              if (speechSessionRef.current !== sessionToken) return;
+              // Note: status stays 'thinking' here on purpose. Flipping to 'speaking'
+              // before real audio has actually started playing shows a "Speaking..."
+              // caption over silence, and if that sentence's synthesis then fails, no
+              // audio ever plays despite the label. 'speaking' is only set from
+              // playSentence's onStart, once audio genuinely begins.
+              fullText += chunk;
+              sentenceBuffer += chunk;
+              updateMessageText(fullText, false);
+
+              SENTENCE_RE.lastIndex = 0;
+              let consumed = 0;
+              let match: RegExpExecArray | null;
+              while ((match = SENTENCE_RE.exec(sentenceBuffer)) !== null) {
+                const sentence = match[0];
+                if (sentence.trim()) {
+                  enqueueSpeechSentence(sentence, sessionToken);
+                }
+                consumed = SENTENCE_RE.lastIndex;
+              }
+              sentenceBuffer = sentenceBuffer.slice(consumed);
+            },
+            () => {
+              if (speechSessionRef.current === sessionToken && sentenceBuffer.trim()) {
+                enqueueSpeechSentence(sentenceBuffer, sessionToken);
+              }
+              sentenceBuffer = '';
+              updateMessageText(fullText, true);
+              resolveStream();
+            },
+            (streamErr) => {
+              console.error('Streaming chat failed:', streamErr);
+              resolveStream();
+            },
+            enginePrefs.model,
+            enginePrefs.provider
+          );
+        });
+
+        if (!fullText.trim()) {
+          throw new Error('Empty response from streaming chat');
+        }
+
+        // Estimated telemetry (streaming doesn't return real token counts)
+        const inTok = Math.max(1, Math.round(cleanPrompt.length / 3.8));
+        const outTok = Math.max(1, Math.round(fullText.length / 3.8));
+        setEngineTelemetry(StorageService.recordEngineUsage(inTok, outTok, 0, 0));
+
+        const wordCountTTS = fullText.split(/\s+/).filter(Boolean).length;
+        const estimatedSecs = Math.max(0.5, Math.round(wordCountTTS * 0.28 * 10) / 10);
+        setVoiceTelemetry(StorageService.recordVoiceTTS(fullText.length, estimatedSecs));
+
+        // Tool-intent detection happens after the fact and doesn't block audio playback
+        fetchDetectTools(cleanPrompt, fullText)
+          .then((res) => {
+            if (speechSessionRef.current !== sessionToken) return;
+            const toolsDetected = res.toolsDetected || [];
+            if (toolsDetected.length === 0) return;
+            handleToolExecutions(toolsDetected);
+            setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, tools: toolsDetected } : m)));
+            setSessions((prev) =>
+              prev.map((s) =>
+                s.id === activeSessionId
+                  ? {
+                      ...s,
+                      messages: (s.messages || []).map((m) =>
+                        m.id === msgId ? { ...m, tools: toolsDetected } : m
+                      ),
+                    }
+                  : s
               )
             );
-            setSessions((prev) =>
-              prev.map((s) => {
-                if (s.id === activeSessionId) {
-                  return {
-                    ...s,
-                    previewText: revealed,
-                    updatedAt: Date.now(),
-                    messages: (s.messages || []).map((m) =>
-                      m.id === msgId ? { ...m, content: revealed, isStreaming: !isDone } : m
-                    ),
-                  };
-                }
-                return s;
-              })
-            );
-          };
-
-          speakText(fullText, (revealed) => {
-            updateMessageText(revealed, false);
-          }).then(() => {
-            updateMessageText(fullText, true);
-          });
-        } else {
-          throw new Error(response.error || 'Failed to get response');
-        }
+          })
+          .catch(() => {});
       } catch (err: any) {
         console.error('Failed to send message:', err);
         const errorMsg: ChatMessage = {
@@ -815,7 +1140,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         isSendingMessageRef.current = false;
       }
     },
-    [messages, activeSessionId, handleToolExecutions, speakText, enginePrefs]
+    [messages, activeSessionId, handleToolExecutions, cancelSpeaking, enqueueSpeechSentence, enginePrefs, voicePrefs]
   );
 
   const usePromptTemplate = useCallback(
@@ -870,6 +1195,142 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     startListeningRef.current = startListening;
   }, [startListening]);
+
+  useEffect(() => {
+    if (deviceSettings.wakeWordEnabled) {
+      void refreshSystemCapabilities();
+    }
+  }, [deviceSettings.wakeWordEnabled, refreshSystemCapabilities]);
+
+  // Self-heal after a backend outage: refreshSystemCapabilities() only ever runs once
+  // on mount and once when the toggle changes, so if the wake-word service was down
+  // when the page loaded, wakeWordServiceHealthy stays stuck false forever even after
+  // the backend recovers — nothing would ever prompt a re-check. Poll while enabled but
+  // unhealthy so it picks the recovery up on its own instead of requiring a page reload.
+  useEffect(() => {
+    if (!deviceSettings.wakeWordEnabled || wakeWordServiceHealthy) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      void refreshSystemCapabilities();
+    }, 20000);
+
+    return () => clearInterval(intervalId);
+  }, [deviceSettings.wakeWordEnabled, wakeWordServiceHealthy, refreshSystemCapabilities]);
+
+  useEffect(() => {
+    if (!deviceSettings.wakeWordEnabled) {
+      wakeWordConnectingRef.current = false;
+      wakeWordActiveUrlRef.current = null;
+      void wakeWordRef.current.stop(false);
+      setWakeWordState('disabled');
+      return;
+    }
+
+    if (!wakeWordServiceHealthy || !wakeWordWebSocketUrl) {
+      wakeWordConnectingRef.current = false;
+      wakeWordActiveUrlRef.current = null;
+      void wakeWordRef.current.stop(false);
+      setWakeWordState('unavailable');
+      return;
+    }
+
+    if (status !== 'idle') {
+      wakeWordConnectingRef.current = false;
+      wakeWordActiveUrlRef.current = null;
+      void wakeWordRef.current.stop(false);
+      return;
+    }
+
+    const alreadyMonitoring =
+      wakeWordRef.current.isMonitoring() &&
+      wakeWordActiveUrlRef.current === wakeWordWebSocketUrl;
+    if (alreadyMonitoring) {
+      setWakeWordState((prev) => (prev === 'arming' ? 'armed' : prev));
+      return;
+    }
+
+    if (
+      wakeWordConnectingRef.current &&
+      wakeWordActiveUrlRef.current === wakeWordWebSocketUrl
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    wakeWordConnectingRef.current = true;
+    wakeWordActiveUrlRef.current = wakeWordWebSocketUrl;
+    setWakeWordState((prev) => (prev === 'armed' ? prev : 'arming'));
+
+    void wakeWordRef.current.start(wakeWordWebSocketUrl, {
+      onReady: (phrase) => {
+        if (cancelled) return;
+        wakeWordConnectingRef.current = false;
+        setWakeWordPhrase(phrase);
+        setWakeWordLoadError(null);
+        setWakeWordState('armed');
+      },
+      onMonitoring: () => {
+        if (cancelled) return;
+        wakeWordConnectingRef.current = false;
+        setWakeWordState((prev) => (prev === 'triggered' ? prev : 'armed'));
+      },
+      onDetected: () => {
+        if (cancelled) return;
+        wakeWordConnectingRef.current = false;
+        wakeWordActiveUrlRef.current = null;
+        setWakeWordState('triggered');
+        if (deviceSettings.soundEffects) {
+          SoundFXService.getInstance().playChime('focus');
+        }
+        void wakeWordRef.current.stop(false);
+        void startListeningRef.current?.();
+      },
+      onUnavailable: (message) => {
+        if (cancelled) return;
+        wakeWordConnectingRef.current = false;
+        wakeWordActiveUrlRef.current = null;
+        setWakeWordLoadError(message);
+        setWakeWordServiceHealthy(false);
+        setWakeWordState('unavailable');
+      },
+      onError: (error) => {
+        if (cancelled) return;
+        wakeWordConnectingRef.current = false;
+        wakeWordActiveUrlRef.current = null;
+        setWakeWordLoadError(error.message);
+        setWakeWordState('error');
+      },
+      onClosed: () => {
+        if (cancelled) return;
+        wakeWordConnectingRef.current = false;
+        wakeWordActiveUrlRef.current = null;
+        if (status === 'idle' && deviceSettings.wakeWordEnabled && wakeWordServiceHealthy) {
+          setWakeWordState('armed');
+        }
+      },
+    }).then((started) => {
+      if (!started && !cancelled) {
+        wakeWordConnectingRef.current = false;
+        wakeWordActiveUrlRef.current = null;
+        setWakeWordState('error');
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      wakeWordConnectingRef.current = false;
+      wakeWordActiveUrlRef.current = null;
+      void wakeWordRef.current.stop(false);
+    };
+  }, [
+    deviceSettings.soundEffects,
+    deviceSettings.wakeWordEnabled,
+    status,
+    wakeWordServiceHealthy,
+    wakeWordWebSocketUrl,
+  ]);
 
   const stopListening = useCallback(() => {
     clearTimeout(autoListenTimerRef.current);
@@ -942,6 +1403,10 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         deepgramVoices,
         hasDeepgramKey,
         isSynthesizingTTS,
+        wakeWordState,
+        wakeWordServiceHealthy,
+        wakeWordPhrase,
+        wakeWordLoadError,
         appMode,
         setAppMode,
         activeTool,

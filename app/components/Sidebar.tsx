@@ -710,17 +710,8 @@ export const Sidebar: React.FC = () => {
           )}
         </div>
 
-        {/* 3. Bottom Footer (Engine & Direct Settings Quick Links) */}
-        <div className="p-3 shrink-0 border-t border-white/[0.08] bg-black/40 space-y-2">
-          {/* Engine Status Badge */}
-          <div className="px-2 py-1 rounded-lg bg-white/[0.03] border border-white/[0.06] flex items-center justify-between text-[10px] text-neutral-400 font-mono">
-            <div className="flex items-center space-x-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span>Gemini 3.7 Flash</span>
-            </div>
-            <span className="text-[9px] text-neutral-400 uppercase">Online</span>
-          </div>
-
+        {/* 3. Bottom Footer (Direct Settings Quick Links) */}
+        <div className="p-3 shrink-0 border-t border-white/[0.08] bg-black/40">
           {/* Quick Settings Action Button */}
           <button
             onClick={() => {

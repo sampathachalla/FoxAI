@@ -14,6 +14,7 @@ import {
   EngineTelemetry,
   VoiceTelemetry,
   CoreShapeId,
+  CelestialId,
 } from '../types';
 import { ACCENT_THEMES } from '../utils/formatters';
 
@@ -33,6 +34,7 @@ export const STORAGE_KEYS = {
   SETTINGS_TAB: 'fox_settings_tab_v1',
   ENGINE_PREFS: 'fox_engine_prefs_v1',
   HEADER_QUICK_OPTIONS: 'fox_header_quick_options_v1',
+  PLANETARIUM_TARGET: 'fox_planetarium_focused_target',
 };
 
 export const DEFAULT_PROMPT_TEMPLATES: PromptTemplate[] = [
@@ -309,7 +311,8 @@ export const StorageService = {
         saved === 'torus' ||
         saved === 'icosahedron' ||
         saved === 'helix' ||
-        saved === 'tesseract'
+        saved === 'tesseract' ||
+        saved === 'planetarium'
       ) {
         return saved;
       }
@@ -367,6 +370,7 @@ export const StorageService = {
       hapticFeedback: true,
       ambientGlow: true,
       soundEffects: true,
+      wakeWordEnabled: false,
     };
   },
 
@@ -379,7 +383,14 @@ export const StorageService = {
   loadAppMode(): AppMode {
     try {
       const mode = localStorage.getItem(STORAGE_KEYS.APP_MODE);
-      if (mode === 'voice' || mode === 'chat' || mode === 'settings') return mode;
+      if (
+        mode === 'voice' ||
+        mode === 'chat' ||
+        mode === 'settings' ||
+        mode === 'tools'
+      ) {
+        return mode;
+      }
     } catch (e) {}
     return 'voice';
   },
@@ -387,6 +398,33 @@ export const StorageService = {
   saveAppMode(mode: AppMode) {
     try {
       localStorage.setItem(STORAGE_KEYS.APP_MODE, mode);
+    } catch (e) {}
+  },
+
+  loadPlanetariumTarget(fallback: CelestialId = 'sun'): CelestialId {
+    try {
+      const target = localStorage.getItem(STORAGE_KEYS.PLANETARIUM_TARGET);
+      if (
+        target === 'sun' ||
+        target === 'mercury' ||
+        target === 'venus' ||
+        target === 'earth' ||
+        target === 'mars' ||
+        target === 'jupiter' ||
+        target === 'saturn' ||
+        target === 'uranus' ||
+        target === 'neptune' ||
+        target === 'pluto'
+      ) {
+        return target;
+      }
+    } catch (e) {}
+    return fallback;
+  },
+
+  savePlanetariumTarget(target: CelestialId): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.PLANETARIUM_TARGET, target);
     } catch (e) {}
   },
 

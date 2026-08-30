@@ -128,6 +128,70 @@ export class MockCanvasRenderingContext2D {
     });
   }
 
+  fillRect(x: number, y: number, w: number, h: number): void {
+    this.drawCalls.push({ type: 'fillRect', args: [x, y, w, h, this.fillStyle] });
+  }
+
+  rect(x: number, y: number, w: number, h: number): void {
+    this.drawCalls.push({ type: 'rect', args: [x, y, w, h] });
+  }
+
+  ellipse(
+    x: number,
+    y: number,
+    radiusX: number,
+    radiusY: number,
+    rotation: number,
+    startAngle: number,
+    endAngle: number,
+    counterclockwise?: boolean
+  ): void {
+    this.drawCalls.push({
+      type: 'ellipse',
+      args: [x, y, radiusX, radiusY, rotation, startAngle, endAngle, counterclockwise],
+    });
+  }
+
+  translate(x: number, y: number): void {
+    this.drawCalls.push({ type: 'translate', args: [x, y] });
+  }
+
+  rotate(angle: number): void {
+    this.drawCalls.push({ type: 'rotate', args: [angle] });
+  }
+
+  clip(): void {
+    this.drawCalls.push({ type: 'clip', args: [] });
+  }
+
+  quadraticCurveTo(cpx: number, cpy: number, x: number, y: number): void {
+    this.drawCalls.push({ type: 'quadraticCurveTo', args: [cpx, cpy, x, y] });
+  }
+
+  bezierCurveTo(cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number): void {
+    this.drawCalls.push({ type: 'bezierCurveTo', args: [cp1x, cp1y, cp2x, cp2y, x, y] });
+  }
+
+  roundRect(x: number, y: number, w: number, h: number, radii?: number | number[]): void {
+    this.drawCalls.push({ type: 'roundRect', args: [x, y, w, h, radii] });
+  }
+
+  fillText(text: string, x: number, y: number, maxWidth?: number): void {
+    this.drawCalls.push({ type: 'fillText', args: [text, x, y, maxWidth] });
+  }
+
+  strokeText(text: string, x: number, y: number, maxWidth?: number): void {
+    this.drawCalls.push({ type: 'strokeText', args: [text, x, y, maxWidth] });
+  }
+
+  measureText(text: string): { width: number } {
+    return { width: text.length * 7.5 };
+  }
+
+  setLineDash(segments: number[]): void {
+    this.drawCalls.push({ type: 'setLineDash', args: [segments] });
+  }
+
   createRadialGradient(x0: number, y0: number, r0: number, x1: number, y1: number, r1: number): any {
     const stops: { offset: number; color: string }[] = [];
     return {

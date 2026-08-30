@@ -17,6 +17,7 @@ import {
   X,
   SlidersHorizontal,
   Mic,
+  Orbit,
 } from 'lucide-react';
 import { ActiveToolType, HeaderQuickOptionId } from '../types';
 
@@ -77,6 +78,8 @@ export const Header: React.FC<HeaderProps> = () => {
     toggleListening,
     openToolPanel,
     cancelSpeaking,
+    wakeWordState,
+    wakeWordLoadError,
   } = useVoiceAssistant();
 
   const [currentTime, setCurrentTime] = useState<string>('');
@@ -290,9 +293,9 @@ export const Header: React.FC<HeaderProps> = () => {
         <div className="flex items-center space-x-3 min-w-0">
           {/* Brand Logo */}
           <button
-            onClick={() => setAppMode('chat')}
+            onClick={() => setAppMode('voice')}
             className="flex items-center space-x-2 shrink-0 cursor-pointer group"
-            title="Fox Assistant Home"
+            title="Open Voice Mode"
           >
             <div className="w-6 h-6 rounded-full bg-white flex items-center justify-center shadow-sm shrink-0 group-hover:scale-105 transition-transform">
               <div className="w-2 h-2 bg-black rounded-full" />
@@ -379,6 +382,43 @@ export const Header: React.FC<HeaderProps> = () => {
 
         {/* Right Controls: Exit Tools + Dynamic Configurable Quick Options + Permanent Rightmost Control Center */}
         <div className="flex items-center space-x-1.5 shrink-0">
+          {/* Ambient Wake-Word Status Indicator (only shown when the feature is enabled) */}
+          {wakeWordState !== 'disabled' && (
+            <div
+              className="p-2 rounded-xl flex items-center justify-center"
+              title={
+                wakeWordState === 'armed' || wakeWordState === 'detecting'
+                  ? 'Wake word is listening for "Hey Jarvis"'
+                  : wakeWordState === 'arming'
+                  ? 'Wake word connecting...'
+                  : wakeWordState === 'triggered'
+                  ? 'Wake word triggered'
+                  : wakeWordLoadError || 'Wake word unavailable'
+              }
+              aria-label={`Wake word status: ${wakeWordState}`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  wakeWordState === 'armed' || wakeWordState === 'detecting' || wakeWordState === 'triggered'
+                    ? 'animate-pulse'
+                    : wakeWordState === 'arming'
+                    ? 'animate-ping'
+                    : ''
+                }`}
+                style={{
+                  backgroundColor:
+                    wakeWordState === 'armed' || wakeWordState === 'detecting' || wakeWordState === 'triggered'
+                      ? accentTheme.primary
+                      : wakeWordState === 'arming'
+                      ? '#9ca3af'
+                      : wakeWordState === 'error'
+                      ? '#f87171'
+                      : '#fbbf24',
+                }}
+              />
+            </div>
+          )}
+
           {/* Exit Tools Button (conditional when in tools view) */}
           {appMode === 'tools' && (
             <button

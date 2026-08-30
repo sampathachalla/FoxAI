@@ -8,11 +8,12 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Plus,
+  Eraser,
 } from 'lucide-react';
 
 export const AuraStage: React.FC = () => {
-  const { messages = [], createNewSession } = useVoiceAssistant();
-  const [isChatOpen, setIsChatOpen] = useState(true);
+  const { messages = [], createNewSession, clearChat } = useVoiceAssistant();
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const scrollRef = useScrollToBottom(messages);
 
   return (
@@ -28,6 +29,17 @@ export const AuraStage: React.FC = () => {
         >
           <Plus className="w-3.5 h-3.5 text-cyan-400" />
           <span className="text-[11px] font-medium tracking-wide">New Chat</span>
+        </button>
+
+        {/* Clear Chat Button */}
+        <button
+          onClick={() => clearChat()}
+          className="px-3 py-1.5 rounded-full border border-white/20 bg-black/60 hover:bg-black/80 text-white text-xs font-medium flex items-center space-x-1.5 transition-all cursor-pointer backdrop-blur-xl shadow-lg hover:border-white/30"
+          title="Clear the current conversation"
+          aria-label="Clear chat"
+        >
+          <Eraser className="w-3.5 h-3.5 text-rose-400" />
+          <span className="text-[11px] font-medium tracking-wide">Clear Chat</span>
         </button>
 
         {/* Toggle Conversation Overlay Button */}
@@ -63,7 +75,7 @@ export const AuraStage: React.FC = () => {
       {/* Main Unified Content Stage: 3D Visualizer fills the component while transcripts float in-scene on the side */}
       <div className="w-full h-full flex-1 min-h-0 relative flex items-center justify-center overflow-hidden">
         {/* 3D Visualizer Section - Full Stage Presence */}
-        <div className="w-full h-full flex items-center justify-center relative">
+        <div className="w-full h-full flex-1 min-h-0 flex items-center justify-center relative">
           <FloatingOrb />
         </div>
 

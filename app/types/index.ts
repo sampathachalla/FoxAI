@@ -92,8 +92,10 @@ export interface DeepgramVoiceItem {
 }
 
 export interface VoicePreference {
-  provider?: 'deepgram' | 'webspeech' | 'auto';
+  provider?: 'deepgram' | 'webspeech' | 'hermes-edge' | 'hermes-piper' | 'auto';
   deepgramVoice?: string;
+  hermesEdgeVoice?: string;
+  hermesPiperVoice?: string;
   voiceURI: string;
   pitch: number;
   rate: number;
@@ -107,7 +109,17 @@ export interface DeviceSettingState {
   hapticFeedback: boolean;
   ambientGlow: boolean;
   soundEffects: boolean;
+  wakeWordEnabled: boolean;
 }
+
+export type WakeWordState =
+  | 'disabled'
+  | 'arming'
+  | 'armed'
+  | 'detecting'
+  | 'triggered'
+  | 'unavailable'
+  | 'error';
 
 export type HeaderQuickOptionId =
   | 'color_theme'
@@ -150,7 +162,7 @@ export interface VoiceTelemetry {
   lastUpdated: number;
 }
 
-export type CoreShapeId = 'sphere' | 'torus' | 'icosahedron' | 'helix' | 'tesseract';
+export type CoreShapeId = 'sphere' | 'torus' | 'icosahedron' | 'helix' | 'tesseract' | 'planetarium';
 
 export interface CoreShapeConfig {
   id: CoreShapeId;
@@ -202,6 +214,14 @@ export const CORE_SHAPES: CoreShapeConfig[] = [
     iconName: 'Box',
     particleCount: 2400,
   },
+  {
+    id: 'planetarium',
+    name: '3D Planetarium',
+    tagline: 'Solar System Planetary Core',
+    description: 'Central luminous Sun with all 9 revolving planets, 3D Saturn rings & orbital tracks',
+    iconName: 'Globe',
+    particleCount: 2400,
+  },
 ];
 
 export const CORE_SHAPE_CONFIGS: Record<CoreShapeId, CoreShapeConfig> = {
@@ -210,5 +230,60 @@ export const CORE_SHAPE_CONFIGS: Record<CoreShapeId, CoreShapeConfig> = {
   icosahedron: CORE_SHAPES[2],
   helix: CORE_SHAPES[3],
   tesseract: CORE_SHAPES[4],
+  planetarium: CORE_SHAPES[5],
 };
 
+// ============================================================================
+// Fox AI 3D Planetarium Mode Types & Contracts
+// ============================================================================
+
+export type CelestialId =
+  | 'sun'
+  | 'mercury'
+  | 'venus'
+  | 'earth'
+  | 'mars'
+  | 'jupiter'
+  | 'saturn'
+  | 'uranus'
+  | 'neptune'
+  | 'pluto';
+
+export type CelestialType =
+  | 'star'
+  | 'terrestrial'
+  | 'gas_giant'
+  | 'ice_giant'
+  | 'dwarf_planet';
+
+export interface CelestialBodyData {
+  id: CelestialId;
+  name: string;
+  subtitle: string;
+  type: CelestialType;
+  color: string;
+  secondaryColor: string;
+  glowColor: string;
+  diameterKm: number;
+  relativeDiameter: number;
+  distanceFromSunMillionKm: number;
+  distanceAu: number;
+  orbitalRadiusScaled: number;
+  orbitalPeriodDays: number;
+  orbitalPeriodYears: number;
+  orbitalSpeedKmS: number;
+  rotationPeriodHours: number;
+  surfaceTemperatureC: string;
+  surfaceTemperatureK: string;
+  gravityMs2: number;
+  gravityG: number;
+  moonsCount: number;
+  axialTiltDeg: number;
+  orbitalInclinationDeg: number;
+  hasRings?: boolean;
+  tagline: string;
+  description: string;
+  facts: [string, string, string];
+}
+
+export type PlanetariumSimSpeed = 0 | 0.25 | 0.5 | 1 | 2 | 5 | 10;

@@ -29,3 +29,8 @@ class AgentRunRequest(BaseModel):
 class AgentRunResponse(BaseModel):
     success: bool
     data: Dict[str, Any]
+
+class TTSSynthesizeRequest(BaseModel):
+    text: str
+    engine: Optional[str] = "edge"
+    voice: Optional[str] = None

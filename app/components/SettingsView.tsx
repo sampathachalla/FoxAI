@@ -1,6 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
+import { fetchHermesTTSVoices } from '../services/api';
 import { ACCENT_THEMES } from '../utils/formatters';
 import { SettingsTab, EnginePreferences, HeaderQuickOptionId, CoreShapeId, CORE_SHAPES } from '../types';
 import { ALL_QUICK_OPTIONS } from './QuickAccessPanel';
@@ -39,6 +40,7 @@ import {
   Box,
   Boxes,
   CircleDot,
+  Globe,
 } from 'lucide-react';
 
 const SHAPE_ICONS: Record<CoreShapeId, React.ElementType> = {
@@ -47,6 +49,7 @@ const SHAPE_ICONS: Record<CoreShapeId, React.ElementType> = {
   icosahedron: Hexagon,
   helix: Dna,
   tesseract: Boxes,
+  planetarium: Globe,
 };
 
 const SHAPE_BADGES: Record<CoreShapeId, { type: string; motion: string }> = {
@@ -55,6 +58,7 @@ const SHAPE_BADGES: Record<CoreShapeId, { type: string; motion: string }> = {
   icosahedron: { type: 'Crystal Polyhedron', motion: 'Facet Lattice' },
   helix: { type: 'Dual Strand Wave', motion: 'Biomimetic Twist' },
   tesseract: { type: '4D Hypercube Matrix', motion: '4D Perspective Projection' },
+  planetarium: { type: '9 Revolving Planets', motion: 'Keplerian Orbits' },
 };
 
 export const SettingsView: React.FC = () => {
@@ -70,6 +74,7 @@ export const SettingsView: React.FC = () => {
     hasDeepgramKey,
     speakText,
     cancelSpeaking,
+    updateDeviceSetting,
     settingsTab,
     setSettingsTab,
     setAppMode,
@@ -82,6 +87,10 @@ export const SettingsView: React.FC = () => {
     headerQuickOptions,
     setHeaderQuickOptions,
     deviceSettings,
+    wakeWordState,
+    wakeWordServiceHealthy,
+    wakeWordPhrase,
+    wakeWordLoadError,
     engineTelemetry,
     voiceTelemetry,
     resetTelemetry,
@@ -89,12 +98,45 @@ export const SettingsView: React.FC = () => {
 
   const [editingHeaderSlot, setEditingHeaderSlot] = useState<number | null>(null);
 
-  const [isPlayingTest, setIsPlayingTest] = useState(false);
   const [testingVoiceId, setTestingVoiceId] = useState<string | null>(null);
   const [isCopied, setIsCopied] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [testVisualizerLevel, setTestVisualizerLevel] = useState(0);
-  const testIntervalRef = useRef<number | null>(null);
+
+  const [deepgramFamilyFilter, setDeepgramFamilyFilter] = useState<'Aura-2' | 'Aura-1'>('Aura-2');
+
+  const [hermesVoices, setHermesVoices] = useState<any[]>([]);
+  const [hermesVoicesLoading, setHermesVoicesLoading] = useState(false);
+  const [hermesVoicesError, setHermesVoicesError] = useState<string | null>(null);
+  const [testingHermesVoiceId, setTestingHermesVoiceId] = useState<string | null>(null);
+
+  const isHermesProvider = voicePrefs.provider === 'hermes-edge' || voicePrefs.provider === 'hermes-piper';
+  const hermesEngine: 'edge' | 'piper' = voicePrefs.provider === 'hermes-piper' ? 'piper' : 'edge';
+
+  useEffect(() => {
+    if (!isHermesProvider) return;
+    let cancelled = false;
+
+    setHermesVoicesLoading(true);
+    setHermesVoicesError(null);
+
+    fetchHermesTTSVoices(hermesEngine)
+      .then((res) => {
+        if (cancelled) return;
+        setHermesVoices(res.voices || []);
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setHermesVoicesError(err?.message || 'Hermes TTS microservice unavailable');
+        setHermesVoices([]);
+      })
+      .finally(() => {
+        if (!cancelled) setHermesVoicesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isHermesProvider, hermesEngine]);
 
   // Tabs configuration
   const tabs: { id: SettingsTab; label: string; icon: React.ElementType; desc: string }[] = [
@@ -108,7 +150,7 @@ export const SettingsView: React.FC = () => {
       id: 'voice',
       label: 'Voice & Speech',
       icon: Mic,
-      desc: 'Deepgram Aura neural synthesis, voice selection, pitch, and rate',
+      desc: 'Deepgram Aura and Hermes (Edge/Piper) neural synthesis, voice selection, pitch, and rate',
     },
     {
       id: 'engine',
@@ -123,45 +165,6 @@ export const SettingsView: React.FC = () => {
       desc: 'Conversation history, export tools, and storage metrics',
     },
   ];
-
-  // Test Voice Speech Playback
-  const handleTestVoice = async () => {
-    if (isPlayingTest) {
-      cancelSpeaking();
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
-      if (testIntervalRef.current) clearInterval(testIntervalRef.current);
-      setIsPlayingTest(false);
-      setTestVisualizerLevel(0);
-      return;
-    }
-
-    setIsPlayingTest(true);
-
-    testIntervalRef.current = window.setInterval(() => {
-      setTestVisualizerLevel(Math.random() * 0.75 + 0.25);
-    }, 80);
-
-    const activeProvider = voicePrefs.provider || 'auto';
-    const isDeepgram = (activeProvider === 'deepgram' || (activeProvider === 'auto' && hasDeepgramKey)) && hasDeepgramKey;
-
-    const testPhrase = isDeepgram
-      ? `Good day. I am Fox. This is a live neural audio preview powered by Deepgram Aura Text-to-Speech.`
-      : `Good day. I am Fox. This is a live voice preview using ${
-          voicePrefs.voiceURI ? 'your selected synthesizer voice' : 'the system default voice'
-        } at ${voicePrefs.rate}x speed.`;
-
-    try {
-      await speakText(testPhrase);
-    } finally {
-      setTimeout(() => {
-        setIsPlayingTest(false);
-        setTestVisualizerLevel(0);
-        if (testIntervalRef.current) clearInterval(testIntervalRef.current);
-      }, 4000);
-    }
-  };
 
   const handlePreviewDeepgramVoice = async (voiceId: string) => {
     if (testingVoiceId === voiceId) {
@@ -182,10 +185,37 @@ export const SettingsView: React.FC = () => {
     const phrase = `Hello! I am ${voiceObj ? voiceObj.name : 'Fox'}, speaking with the Deepgram ${voiceObj?.family || 'Aura'} neural model.`;
 
     try {
-      await speakText(phrase);
+      await speakText(phrase, undefined, { suppressAutoListen: true });
     } finally {
       setTimeout(() => {
         setTestingVoiceId(null);
+      }, 3500);
+    }
+  };
+
+  const handlePreviewHermesVoice = async (voiceId: string) => {
+    if (testingHermesVoiceId === voiceId) {
+      cancelSpeaking();
+      setTestingHermesVoiceId(null);
+      return;
+    }
+
+    setTestingHermesVoiceId(voiceId);
+    setVoicePrefs({
+      ...voicePrefs,
+      ...(hermesEngine === 'piper' ? { hermesPiperVoice: voiceId } : { hermesEdgeVoice: voiceId }),
+    });
+
+    const voiceObj = hermesVoices.find((v) => v.id === voiceId);
+    const phrase = `Hello! I am ${voiceObj ? voiceObj.name : 'Fox'}, speaking through Hermes ${
+      hermesEngine === 'piper' ? 'Piper' : 'Microsoft Edge'
+    } text-to-speech.`;
+
+    try {
+      await speakText(phrase, undefined, { suppressAutoListen: true });
+    } finally {
+      setTimeout(() => {
+        setTestingHermesVoiceId(null);
       }, 3500);
     }
   };
@@ -263,6 +293,37 @@ export const SettingsView: React.FC = () => {
             </p>
           </div>
         </div>
+      </div>
+
+      {/* Settings Section Nav */}
+      <div className="shrink-0 flex items-center gap-2 overflow-x-auto py-3 custom-scrollbar">
+        {tabs.map((tab) => {
+          const isActive = settingsTab === tab.id;
+          const TabIcon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setSettingsTab(tab.id)}
+              className={`shrink-0 px-3 py-2 rounded-xl border text-xs font-medium flex items-center space-x-1.5 transition-all cursor-pointer ${
+                isActive
+                  ? 'text-white shadow-sm'
+                  : 'bg-white/[0.03] border-white/[0.08] text-neutral-400 hover:text-white hover:bg-white/[0.06]'
+              }`}
+              style={
+                isActive
+                  ? {
+                      backgroundColor: `${accentTheme.primary}18`,
+                      borderColor: `${accentTheme.primary}45`,
+                      color: accentTheme.primary,
+                    }
+                  : undefined
+              }
+            >
+              <TabIcon className="w-3.5 h-3.5" />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Main Settings Page Content (Scrollable) */}
@@ -690,6 +751,65 @@ export const SettingsView: React.FC = () => {
                 </button>
               </div>
 
+              <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] space-y-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <CircleDot className="w-4 h-4 text-cyan-400" />
+                      <h2 className="text-sm font-semibold text-white">Wake Word Activation</h2>
+                    </div>
+                    <p className="text-xs text-neutral-400">
+                      Stream low-latency microphone audio to OpenWakeWord and wake Fox when you say {`"${wakeWordPhrase}"`}.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      const nextValue = !deviceSettings.wakeWordEnabled;
+                      updateDeviceSetting('wakeWordEnabled', nextValue);
+                      if (deviceSettings.soundEffects) {
+                        SoundFXService.getInstance().playChime(nextValue ? 'toggle_on' : 'toggle_off');
+                      }
+                    }}
+                    className={`w-14 h-8 rounded-full p-1 transition-colors cursor-pointer shrink-0 ${
+                      deviceSettings.wakeWordEnabled ? 'bg-[#007AFF]' : 'bg-neutral-800'
+                    }`}
+                    style={deviceSettings.wakeWordEnabled ? { backgroundColor: accentTheme.primary } : undefined}
+                  >
+                    <div
+                      className={`w-6 h-6 rounded-full bg-white transition-transform shadow-md ${
+                        deviceSettings.wakeWordEnabled ? 'translate-x-6' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/[0.08]">
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-500 mb-1">Phrase</div>
+                    <div className="text-sm font-semibold text-white">{wakeWordPhrase}</div>
+                  </div>
+                  <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/[0.08]">
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-500 mb-1">Service</div>
+                    <div className={`text-sm font-semibold ${wakeWordServiceHealthy ? 'text-emerald-300' : 'text-amber-300'}`}>
+                      {wakeWordServiceHealthy ? 'Online' : 'Unavailable'}
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/[0.08]">
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-500 mb-1">State</div>
+                    <div className="text-sm font-semibold text-white capitalize">
+                      {wakeWordState.replace('_', ' ')}
+                    </div>
+                  </div>
+                </div>
+
+                {wakeWordLoadError && (
+                  <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                    {wakeWordLoadError}
+                  </div>
+                )}
+              </div>
+
               {/* TTS Engine Provider Selector */}
               <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -716,7 +836,7 @@ export const SettingsView: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {/* Deepgram Aura Provider Card */}
                   <button
                     type="button"
@@ -768,17 +888,17 @@ export const SettingsView: React.FC = () => {
                     </p>
                   </button>
 
-                  {/* Web Speech API Card */}
+                  {/* Hermes Microsoft Edge TTS Card */}
                   <button
                     type="button"
                     onClick={() => {
                       setVoicePrefs({
                         ...voicePrefs,
-                        provider: 'webspeech',
+                        provider: 'hermes-edge',
                       });
                     }}
                     className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative flex flex-col justify-between space-y-3 ${
-                      voicePrefs.provider === 'webspeech'
+                      voicePrefs.provider === 'hermes-edge'
                         ? 'bg-cyan-950/30 border-cyan-400/50 shadow-lg ring-1 ring-cyan-400/30'
                         : 'bg-white/[0.02] border-white/[0.08] hover:bg-white/[0.05] text-neutral-300'
                     }`}
@@ -789,11 +909,11 @@ export const SettingsView: React.FC = () => {
                           <Mic className="w-4 h-4 text-neutral-300" />
                         </div>
                         <div>
-                          <div className="text-xs font-bold text-white">Browser Web Speech API</div>
-                          <div className="text-[10px] text-neutral-400">Local offline speech synthesizer</div>
+                          <div className="text-xs font-bold text-white">Hermes Edge TTS</div>
+                          <div className="text-[10px] text-neutral-400">Microsoft Edge neural voices</div>
                         </div>
                       </div>
-                      {voicePrefs.provider === 'webspeech' && (
+                      {voicePrefs.provider === 'hermes-edge' && (
                         <div
                           className="w-5 h-5 rounded-full flex items-center justify-center text-black"
                           style={{ backgroundColor: accentTheme.primary }}
@@ -803,14 +923,53 @@ export const SettingsView: React.FC = () => {
                       )}
                     </div>
                     <p className="text-[11px] text-neutral-400 leading-relaxed">
-                      Uses your device's built-in text-to-speech engine. Works offline without network requests.
+                      Routed through the Hermes agent microservice. Free Microsoft neural voices; requires network access.
+                    </p>
+                  </button>
+
+                  {/* Hermes Piper TTS Card */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVoicePrefs({
+                        ...voicePrefs,
+                        provider: 'hermes-piper',
+                      });
+                    }}
+                    className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative flex flex-col justify-between space-y-3 ${
+                      voicePrefs.provider === 'hermes-piper'
+                        ? 'bg-cyan-950/30 border-cyan-400/50 shadow-lg ring-1 ring-cyan-400/30'
+                        : 'bg-white/[0.02] border-white/[0.08] hover:bg-white/[0.05] text-neutral-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center text-white border border-white/15">
+                          <Mic className="w-4 h-4 text-neutral-300" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-white">Hermes Piper TTS</div>
+                          <div className="text-[10px] text-neutral-400">Local offline neural synthesizer</div>
+                        </div>
+                      </div>
+                      {voicePrefs.provider === 'hermes-piper' && (
+                        <div
+                          className="w-5 h-5 rounded-full flex items-center justify-center text-black"
+                          style={{ backgroundColor: accentTheme.primary }}
+                        >
+                          <Check className="w-3 h-3 stroke-[3]" />
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-neutral-400 leading-relaxed">
+                      Routed through the Hermes agent microservice. Runs fully offline on the Hermes host once voice models are installed.
                     </p>
                   </button>
                 </div>
               </div>
 
               {/* Deepgram Aura Voice Library Grid (When Deepgram is active) */}
-              {(voicePrefs.provider !== 'webspeech') && (
+              {(voicePrefs.provider === 'deepgram' || (voicePrefs.provider === 'auto' && hasDeepgramKey)) && (
                 <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div className="space-y-1">
@@ -827,9 +986,31 @@ export const SettingsView: React.FC = () => {
                     </span>
                   </div>
 
+                  {/* Aura-2 / Aura-1 Family Toggle */}
+                  <div className="inline-flex p-1 rounded-2xl bg-black/40 border border-white/[0.08]">
+                    {(['Aura-2', 'Aura-1'] as const).map((family) => {
+                      const isActive = deepgramFamilyFilter === family;
+                      return (
+                        <button
+                          key={family}
+                          type="button"
+                          onClick={() => setDeepgramFamilyFilter(family)}
+                          className={`px-4 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                            isActive
+                              ? 'text-black shadow-sm'
+                              : 'text-neutral-400 hover:text-white'
+                          }`}
+                          style={isActive ? { backgroundColor: accentTheme.primary } : undefined}
+                        >
+                          {family}
+                        </button>
+                      );
+                    })}
+                  </div>
+
                   {/* Voices Grid */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
-                    {deepgramVoices.map((voice) => {
+                    {deepgramVoices.filter((voice) => voice.family === deepgramFamilyFilter).map((voice) => {
                       const isSelected = (voicePrefs.deepgramVoice || 'aura-2-asteria-en') === voice.id;
                       const isTestingThis = testingVoiceId === voice.id;
 
@@ -923,6 +1104,123 @@ export const SettingsView: React.FC = () => {
                       );
                     })}
                   </div>
+                </div>
+              )}
+
+              {/* Hermes TTS Voice Library (When Hermes Edge/Piper is active) */}
+              {isHermesProvider && (
+                <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-2">
+                        <Mic className="w-4 h-4 text-cyan-400" />
+                        <h3 className="text-sm font-semibold text-white">
+                          Hermes {hermesEngine === 'piper' ? 'Piper' : 'Microsoft Edge'} Voice Library
+                        </h3>
+                      </div>
+                      <p className="text-xs text-neutral-400">
+                        {hermesEngine === 'piper'
+                          ? 'Voices installed on the Hermes host in api/agent/Tts/piper_models.'
+                          : 'Live catalog fetched from the Hermes agent microservice.'}
+                      </p>
+                    </div>
+                    <span className="text-[10px] font-mono text-neutral-400 self-start sm:self-auto">
+                      Active: {(hermesEngine === 'piper' ? voicePrefs.hermesPiperVoice : voicePrefs.hermesEdgeVoice) || 'default'}
+                    </span>
+                  </div>
+
+                  {hermesVoicesLoading && (
+                    <div className="text-xs text-neutral-400">Loading voices from Hermes agent...</div>
+                  )}
+
+                  {!hermesVoicesLoading && hermesVoicesError && (
+                    <div className="text-xs text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+                      {hermesVoicesError}. Make sure the Hermes Python microservice is running.
+                    </div>
+                  )}
+
+                  {!hermesVoicesLoading && !hermesVoicesError && hermesVoices.length === 0 && (
+                    <div className="text-xs text-neutral-400">
+                      No voices found{hermesEngine === 'piper' ? ' in api/agent/Tts/piper_models' : ''}.
+                    </div>
+                  )}
+
+                  {!hermesVoicesLoading && hermesVoices.length > 0 && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
+                      {hermesVoices.map((voice) => {
+                        const isSelected =
+                          (hermesEngine === 'piper' ? voicePrefs.hermesPiperVoice : voicePrefs.hermesEdgeVoice) === voice.id;
+                        const isTestingThis = testingHermesVoiceId === voice.id;
+                        return (
+                          <div
+                            key={voice.id}
+                            onClick={() =>
+                              setVoicePrefs({
+                                ...voicePrefs,
+                                ...(hermesEngine === 'piper' ? { hermesPiperVoice: voice.id } : { hermesEdgeVoice: voice.id }),
+                              })
+                            }
+                            className={`p-3 rounded-2xl border cursor-pointer space-y-2 transition-all ${
+                              isSelected
+                                ? 'bg-cyan-950/30 border-cyan-400/50 ring-1 ring-cyan-400/30'
+                                : 'bg-white/[0.02] border-white/[0.08] hover:bg-white/[0.05]'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="min-w-0">
+                                <div className="text-xs font-bold text-white truncate">{voice.name || voice.id}</div>
+                                {(voice.country || voice.locale) && (
+                                  <div className="text-[10px] text-neutral-400 mt-0.5">
+                                    {voice.country || voice.locale}
+                                    {voice.gender ? ` • ${voice.gender}` : ''}
+                                  </div>
+                                )}
+                              </div>
+                              {isSelected && (
+                                <div
+                                  className="w-5 h-5 rounded-full flex items-center justify-center text-black shrink-0"
+                                  style={{ backgroundColor: accentTheme.primary }}
+                                >
+                                  <Check className="w-3 h-3 stroke-[3]" />
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="pt-1 border-t border-white/[0.06] flex items-center justify-between">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handlePreviewHermesVoice(voice.id);
+                                }}
+                                className={`px-2.5 py-1 rounded-xl text-[10px] font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${
+                                  isTestingThis
+                                    ? 'bg-rose-500 text-white'
+                                    : 'bg-white/10 hover:bg-white/20 text-white border border-white/10'
+                                }`}
+                              >
+                                {isTestingThis ? (
+                                  <>
+                                    <Square className="w-2.5 h-2.5 fill-current" />
+                                    <span>Stop</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Play className="w-2.5 h-2.5 fill-current" />
+                                    <span>Listen Sample</span>
+                                  </>
+                                )}
+                              </button>
+
+                              <span className="text-[9px] font-mono text-neutral-500 truncate max-w-[110px]">
+                                {voice.id}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1051,59 +1349,6 @@ export const SettingsView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Live Speech Tester Box */}
-              <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-semibold text-white">Audio Synthesizer Test</h3>
-                    <p className="text-xs text-neutral-400">
-                      Preview the active speech synthesis profile instantly.
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={handleTestVoice}
-                    className="px-4 py-2 rounded-xl font-semibold text-xs transition-all flex items-center space-x-2 cursor-pointer shadow-md hover:scale-105"
-                    style={{
-                      backgroundColor: isPlayingTest ? '#ef4444' : accentTheme.primary,
-                      color: isPlayingTest ? '#ffffff' : '#000000',
-                    }}
-                  >
-                    {isPlayingTest ? (
-                      <>
-                        <Square className="w-3.5 h-3.5 fill-current" />
-                        <span>Stop Audio Test</span>
-                      </>
-                    ) : (
-                      <>
-                        <Play className="w-3.5 h-3.5 fill-current" />
-                        <span>Test Voice Output</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                {/* Animated visualizer bar when playing */}
-                {isPlayingTest && (
-                  <div className="p-3 rounded-2xl bg-black/50 border border-white/10 flex items-center justify-center space-x-1.5 h-12">
-                    {[...Array(16)].map((_, i) => (
-                      <motion.div
-                        key={i}
-                        animate={{
-                          height: [6, Math.max(6, Math.random() * 32 * testVisualizerLevel), 6],
-                        }}
-                        transition={{
-                          repeat: Infinity,
-                          duration: 0.35 + (i % 4) * 0.1,
-                          ease: 'easeInOut',
-                        }}
-                        className="w-1.5 rounded-full"
-                        style={{ backgroundColor: accentTheme.primary }}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
             </motion.div>
           )}
 

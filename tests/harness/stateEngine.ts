@@ -1,129 +1,158 @@
 /**
- * State & Persistence Mock Engine for Assistant Context & Settings UI Testing
+ * Mock Assistant Context & Storage State Engine for Fox AI 3D Planetarium Mode
  */
 
-import type { CoreShapeId, CoreShapeConfig, AccentTheme } from './types.ts';
 import {
-  CORE_SHAPES,
+  type AppMode,
+  type CelestialId,
   STORAGE_KEYS,
-  isValidCoreShapeId,
-  normalizeCoreShapeId,
-  ACCENT_THEMES,
+  isValidAppMode,
+  normalizeAppMode,
+  isValidCelestialId,
+  normalizeCelestialId,
 } from './types.ts';
 
-export class AssistantStateMockEngine {
-  private currentShape: CoreShapeId;
-  private currentTheme: AccentTheme;
-  private currentStatus: 'idle' | 'listening' | 'thinking' | 'speaking' = 'idle';
-  private audioLevel: number = 0;
-  private subscribers: Array<(shape: CoreShapeId) => void> = [];
-  private themeSubscribers: Array<(theme: AccentTheme) => void> = [];
-  public chimePlayCount: number = 0;
-  public lastChimeType: string | null = null;
+export interface PlanetariumState {
+  appMode: AppMode;
+  focusedCelestial: CelestialId;
+  simulationSpeed: number;
+  isPaused: boolean;
+  audioLevel: number;
+  hoveredCelestial: CelestialId | null;
+  cameraYaw: number;
+  cameraPitch: number;
+  cameraZoom: number;
+}
 
-  constructor(initialShape?: CoreShapeId, initialThemeId: string = 'fox-cyan') {
-    this.currentShape = initialShape || this.loadPersistedShape();
-    this.currentTheme = ACCENT_THEMES.find((t) => t.id === initialThemeId) || ACCENT_THEMES[0];
+export class MockStorageService {
+  private storage: Storage;
+
+  constructor(storage: Storage = (globalThis as any).localStorage) {
+    this.storage = storage;
   }
 
-  loadPersistedShape(fallback: CoreShapeId = 'sphere'): CoreShapeId {
+  loadAppMode(fallback: AppMode = 'voice'): AppMode {
     try {
-      if (typeof localStorage !== 'undefined') {
-        const saved = localStorage.getItem(STORAGE_KEYS.CORE_SHAPE);
-        if (saved) {
-          return normalizeCoreShapeId(saved, fallback);
-        }
-      }
-    } catch (e) {
-      console.warn('[Storage] Error loading core shape:', e);
-    }
-    return fallback;
-  }
-
-  savePersistedShape(shape: CoreShapeId): void {
-    try {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(STORAGE_KEYS.CORE_SHAPE, shape);
-      }
-    } catch (e) {
-      console.warn('[Storage] Error saving core shape:', e);
+      const val = this.storage.getItem(STORAGE_KEYS.APP_MODE);
+      if (!val) return fallback;
+      return normalizeAppMode(val, fallback);
+    } catch {
+      return fallback;
     }
   }
 
-  getCoreShape(): CoreShapeId {
-    return this.currentShape;
+  saveAppMode(mode: AppMode): boolean {
+    try {
+      if (!isValidAppMode(mode)) return false;
+      this.storage.setItem(STORAGE_KEYS.APP_MODE, mode);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
-  setCoreShape(shape: CoreShapeId): void {
-    const validated = normalizeCoreShapeId(shape, 'sphere');
-    this.currentShape = validated;
-    this.savePersistedShape(validated);
-    this.notifySubscribers(validated);
+  loadPlanetariumTarget(fallback: CelestialId = 'sun'): CelestialId {
+    try {
+      const val = this.storage.getItem(STORAGE_KEYS.PLANETARIUM_TARGET);
+      if (!val) return fallback;
+      return normalizeCelestialId(val, fallback);
+    } catch {
+      return fallback;
+    }
   }
 
-  // 1-Click Settings Switch with Audio Chime Simulation
-  selectShapeFromSettings(shape: CoreShapeId): void {
-    this.playChime('click');
-    this.setCoreShape(shape);
+  savePlanetariumTarget(target: CelestialId): boolean {
+    try {
+      if (!isValidCelestialId(target)) return false;
+      this.storage.setItem(STORAGE_KEYS.PLANETARIUM_TARGET, target);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export class MockAssistantContext {
+  public state: PlanetariumState;
+  private listeners: Set<(state: PlanetariumState) => void> = new Set();
+  private storageService: MockStorageService;
+
+  constructor(initialStorage?: Storage) {
+    this.storageService = new MockStorageService(initialStorage);
+    const initialMode = this.storageService.loadAppMode('voice');
+    const initialTarget = this.storageService.loadPlanetariumTarget('sun');
+
+    this.state = {
+      appMode: initialMode,
+      focusedCelestial: initialTarget,
+      simulationSpeed: 1.0,
+      isPaused: false,
+      audioLevel: 0,
+      hoveredCelestial: null,
+      cameraYaw: 0.45,
+      cameraPitch: 0.55,
+      cameraZoom: 560,
+    };
   }
 
-  playChime(type: string = 'click'): void {
-    this.chimePlayCount++;
-    this.lastChimeType = type;
+  subscribe(listener: (state: PlanetariumState) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
-  getAccentTheme(): AccentTheme {
-    return this.currentTheme;
+  private notify(): void {
+    this.listeners.forEach((fn) => fn({ ...this.state }));
   }
 
-  setAccentTheme(theme: AccentTheme): void {
-    this.currentTheme = theme;
-    this.notifyThemeSubscribers(theme);
+  setAppMode(mode: AppMode): void {
+    const validMode = normalizeAppMode(mode, 'voice');
+    this.state.appMode = validMode;
+    this.storageService.saveAppMode(validMode);
+    this.notify();
   }
 
-  getStatus(): 'idle' | 'listening' | 'thinking' | 'speaking' {
-    return this.currentStatus;
+  setFocusedCelestial(id: CelestialId): void {
+    const validId = normalizeCelestialId(id, 'sun');
+    this.state.focusedCelestial = validId;
+    this.storageService.savePlanetariumTarget(validId);
+    this.notify();
   }
 
-  setStatus(status: 'idle' | 'listening' | 'thinking' | 'speaking'): void {
-    this.currentStatus = status;
+  setSimulationSpeed(speed: number): void {
+    // Clamped [0.1, 10.0] with NaN fallback
+    if (typeof speed !== 'number' || Number.isNaN(speed)) {
+      this.state.simulationSpeed = 1.0;
+    } else {
+      this.state.simulationSpeed = Math.max(0.1, Math.min(10.0, speed));
+    }
+    this.notify();
   }
 
-  getAudioLevel(): number {
-    return this.audioLevel;
+  togglePause(): void {
+    this.state.isPaused = !this.state.isPaused;
+    this.notify();
   }
 
   setAudioLevel(level: number): void {
-    this.audioLevel = Math.max(0, Math.min(1, level));
-  }
-
-  subscribe(callback: (shape: CoreShapeId) => void): () => void {
-    this.subscribers.push(callback);
-    return () => {
-      this.subscribers = this.subscribers.filter((cb) => cb !== callback);
-    };
-  }
-
-  subscribeTheme(callback: (theme: AccentTheme) => void): () => void {
-    this.themeSubscribers.push(callback);
-    return () => {
-      this.themeSubscribers = this.themeSubscribers.filter((cb) => cb !== callback);
-    };
-  }
-
-  private notifySubscribers(shape: CoreShapeId): void {
-    for (const sub of this.subscribers) {
-      sub(shape);
+    if (typeof level !== 'number' || Number.isNaN(level)) {
+      this.state.audioLevel = 0;
+    } else {
+      this.state.audioLevel = Math.max(0, Math.min(1.0, level));
     }
+    this.notify();
   }
 
-  private notifyThemeSubscribers(theme: AccentTheme): void {
-    for (const sub of this.themeSubscribers) {
-      sub(theme);
-    }
+  setHoveredCelestial(id: CelestialId | null): void {
+    this.state.hoveredCelestial = id ? normalizeCelestialId(id, 'sun') : null;
+    this.notify();
   }
 
-  getAvailableShapes(): CoreShapeConfig[] {
-    return CORE_SHAPES;
+  resetCamera(): void {
+    this.state.cameraYaw = 0.45;
+    this.state.cameraPitch = 0.55;
+    this.state.cameraZoom = 560;
+    this.state.focusedCelestial = 'sun';
+    this.storageService.savePlanetariumTarget('sun');
+    this.notify();
   }
 }

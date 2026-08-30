@@ -1,206 +1,210 @@
 /**
- * Tier 3: Cross-Feature Combinations (Pairwise Combinatorial Testing)
- * Systematically exercises combinatorial pairs across 5 Shapes, 5 Audio Levels, 7 Themes, 4 States, 4 Drag Vectors, and Storage States
+ * Tier 3: Cross-Feature Combinatorial Interaction Test Suite for Fox AI 3D Planetarium Mode
+ * Tests pairwise and multi-feature interactions across mode switching, audio reactivity,
+ * camera momentum, target focus lerp, simulation speed, and raycasting.
  */
 
-import { describe, it, beforeEach, afterEach } from 'node:test';
-import assert from 'node:assert';
-import { setupTestEnvironment } from './harness/domMock.ts';
-import type { CoreShapeId, AssistantStatus, AccentTheme } from './harness/types.ts';
-import {
-  CORE_SHAPES,
-  STORAGE_KEYS,
-  ACCENT_THEMES,
-} from './harness/types.ts';
-import { ProceduralGeometryEngine } from './harness/geometryEngine.ts';
-import { AssistantStateMockEngine } from './harness/stateEngine.ts';
+import { describe, it, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
 
-describe('Tier 3: Cross-Feature Combinatorial Pairs', () => {
+import {
+  CELESTIAL_BODIES,
+  CELESTIAL_BODY_MAP,
+  STORAGE_KEYS,
+  type CelestialId,
+  type AppMode,
+} from './harness/types.ts';
+
+import {
+  PlanetariumEngine,
+  CAMERA_DEFAULTS,
+  PITCH_LIMIT_RAD,
+} from './harness/planetariumEngine.ts';
+
+import {
+  MockAssistantContext,
+  MockStorageService,
+} from './harness/stateEngine.ts';
+
+import { setupTestEnvironment } from './harness/domMock.ts';
+
+describe('Tier 3: Cross-Feature Combinations', () => {
   let env: ReturnType<typeof setupTestEnvironment>;
+  let context: MockAssistantContext;
 
   beforeEach(() => {
     env = setupTestEnvironment();
+    context = new MockAssistantContext(env.localStorage);
   });
 
-  afterEach(() => {
-    env.cleanup();
-  });
+  // ---------------------------------------------------------------------------
+  // Combo 1: Mode Switching × Audio Reactivity Subsystem
+  // ---------------------------------------------------------------------------
+  describe('Combo 1: Mode Switching × Audio Reactivity Subsystem', () => {
+    const modes: AppMode[] = ['planetarium', 'voice', 'chat', 'tools'];
+    const audioLevels = [0.0, 0.45, 0.95];
 
-  // =========================================================================
-  // Combinatorial Set 1: All 5 Shapes × 5 Audio Reactivity Levels
-  // =========================================================================
-  describe('Combo Set 1: Core Shapes × Audio Reactivity Levels', () => {
-    const shapes: CoreShapeId[] = ['sphere', 'torus', 'icosahedron', 'helix', 'tesseract'];
-    const audioLevels: number[] = [0.0, 0.25, 0.5, 0.85, 1.0];
-
-    shapes.forEach((shape) => {
+    modes.forEach((mode) => {
       audioLevels.forEach((audio) => {
-        it(`C1: Shape [${shape}] with Audio Level [${audio}] should render bounded coordinates`, () => {
-          let particles;
-          if (shape === 'sphere') {
-            particles = ProceduralGeometryEngine.generateSphereParticles(0.5, 'speaking', audio, 0);
-          } else if (shape === 'torus') {
-            particles = ProceduralGeometryEngine.generateTorusParticles(0.5, 'speaking', audio);
-          } else if (shape === 'icosahedron') {
-            particles = ProceduralGeometryEngine.generateIcosahedronParticles(0.5, 'speaking', audio);
-          } else if (shape === 'helix') {
-            particles = ProceduralGeometryEngine.generateHelixParticles(0.5, 'speaking', audio);
-          } else {
-            particles = ProceduralGeometryEngine.generateTesseractParticles(0.5, 'speaking', audio);
-          }
+        it(`should maintain coherent solar flares and storage state when in mode [${mode}] with audio [${audio}]`, () => {
+          context.setAppMode(mode);
+          context.setAudioLevel(audio);
 
-          assert.ok(particles.length >= 400, `Particle count too low for ${shape}: ${particles.length}`);
-          assert.ok(particles.every((p) => isFinite(p.x) && isFinite(p.y) && isFinite(p.z)));
+          assert.equal(context.state.appMode, mode);
+          assert.equal(context.state.audioLevel, audio);
 
-          const projected = ProceduralGeometryEngine.projectAndSortParticles(
-            particles,
-            0.2,
-            0.1,
-            200,
-            200,
-            ACCENT_THEMES[0],
-            audio,
-            'speaking'
-          );
-
-          assert.strictEqual(projected.length, particles.length);
-          assert.ok(projected.every((pt) => pt.scale > 0 && isFinite(pt.scale)));
+          const frame = PlanetariumEngine.renderFrame(1.5, CAMERA_DEFAULTS, context.state.audioLevel);
+          assert.ok(Number.isFinite(frame.solarFlare.coronalGlowRadius));
+          assert.ok(frame.projectedBodies.length === 10);
         });
       });
     });
   });
 
-  // =========================================================================
-  // Combinatorial Set 2: All 5 Shapes × All 7 Accent Themes
-  // =========================================================================
-  describe('Combo Set 2: Core Shapes × 7 Accent Themes', () => {
-    const shapes: CoreShapeId[] = ['sphere', 'torus', 'icosahedron', 'helix', 'tesseract'];
+  // ---------------------------------------------------------------------------
+  // Combo 2: Target Focus Selection × Active Camera Momentum
+  // ---------------------------------------------------------------------------
+  describe('Combo 2: Target Focus Selection × Active Camera Momentum', () => {
+    const targetBodies: CelestialId[] = ['mercury', 'earth', 'mars', 'jupiter', 'saturn', 'pluto'];
 
-    shapes.forEach((shape) => {
-      ACCENT_THEMES.forEach((theme) => {
-        it(`C2: Shape [${shape}] with Theme [${theme.id}] should project with correct theme tints`, () => {
-          const state = new AssistantStateMockEngine(shape, theme.id);
-          assert.strictEqual(state.getCoreShape(), shape);
-          assert.strictEqual(state.getAccentTheme().id, theme.id);
-
-          const particles = ProceduralGeometryEngine.generateSphereParticles(0, 'idle', 0);
-          const projected = ProceduralGeometryEngine.projectAndSortParticles(
-            particles.slice(0, 10),
-            0,
-            0,
-            100,
-            100,
-            theme
-          );
-
-          assert.strictEqual(projected.length, 10);
-          assert.ok(projected[0].color.startsWith('rgb('));
-        });
-      });
-    });
-  });
-
-  // =========================================================================
-  // Combinatorial Set 3: All 5 Shapes × 4 Assistant States
-  // =========================================================================
-  describe('Combo Set 3: Core Shapes × 4 Assistant States', () => {
-    const shapes: CoreShapeId[] = ['sphere', 'torus', 'icosahedron', 'helix', 'tesseract'];
-    const statuses: AssistantStatus[] = ['idle', 'listening', 'thinking', 'speaking'];
-
-    shapes.forEach((shape) => {
-      statuses.forEach((status) => {
-        it(`C3: Shape [${shape}] in Status [${status}] should execute procedural loop`, () => {
-          const audio = status === 'speaking' ? 0.8 : status === 'listening' ? 0.4 : 0.0;
-          let particles;
-
-          if (shape === 'sphere') {
-            particles = ProceduralGeometryEngine.generateSphereParticles(1.0, status, audio, status === 'thinking' ? 1.0 : 0.0);
-          } else if (shape === 'torus') {
-            particles = ProceduralGeometryEngine.generateTorusParticles(1.0, status, audio);
-          } else if (shape === 'icosahedron') {
-            particles = ProceduralGeometryEngine.generateIcosahedronParticles(1.0, status, audio);
-          } else if (shape === 'helix') {
-            particles = ProceduralGeometryEngine.generateHelixParticles(1.0, status, audio);
-          } else {
-            particles = ProceduralGeometryEngine.generateTesseractParticles(1.0, status, audio);
-          }
-
-          assert.ok(particles.length > 0);
-          const projected = ProceduralGeometryEngine.projectAndSortParticles(
-            particles,
-            0.1,
-            0.1,
-            190,
-            150,
-            ACCENT_THEMES[0],
-            audio,
-            status
-          );
-
-          assert.strictEqual(projected.length, particles.length);
-        });
-      });
-    });
-  });
-
-  // =========================================================================
-  // Combinatorial Set 4: Drag Momentum Vectors × Complex Geometries
-  // =========================================================================
-  describe('Combo Set 4: Drag Momentum Vectors × Geometries', () => {
-    const dragVectors = [
-      { name: 'Positive Yaw+Pitch', vy: 0.12, vp: 0.06 },
-      { name: 'Negative Yaw+Pitch', vy: -0.12, vp: -0.06 },
-      { name: 'Diagonal Cross Spin', vy: 0.15, vp: -0.10 },
-      { name: 'Pure Yaw Drift', vy: 0.08, vp: 0.0 },
-    ];
-
-    dragVectors.forEach((vec) => {
-      it(`C4: Drag Vector [${vec.name}] decays smoothly over 30 frames`, () => {
-        let physics = {
-          yaw: 0,
-          pitch: 0,
-          velocityYaw: vec.vy,
-          velocityPitch: vec.vp,
-          isDragging: false,
-          time: 0,
+    targetBodies.forEach((target) => {
+      it(`should smoothly capture and center [${target}] even when camera has active angular momentum`, () => {
+        // Impart high camera momentum
+        let camState = {
+          ...CAMERA_DEFAULTS,
+          velocityYaw: 0.12,
+          velocityPitch: 0.08,
+          targetFocus: target,
         };
 
+        context.setFocusedCelestial(target);
+
+        // Step physics 30 frames
         for (let f = 0; f < 30; f++) {
-          physics = { ...ProceduralGeometryEngine.stepMomentumPhysics(physics, 1 / 60), isDragging: false, time: f / 60 };
+          camState = PlanetariumEngine.stepMomentumPhysics(camState, 1 / 60);
         }
 
-        assert.ok(Math.abs(physics.velocityYaw) < Math.abs(vec.vy), 'Yaw velocity must decay');
-        assert.ok(Math.abs(physics.velocityPitch) <= Math.abs(vec.vp), 'Pitch velocity must decay');
+        // Render frame with target centered
+        const frame = PlanetariumEngine.renderFrame(5.0, camState);
+        const focusedBody = frame.projectedBodies.find((b) => b.id === target)!;
+
+        assert.equal(Math.round(focusedBody.screenX), 600);
+        assert.equal(Math.round(focusedBody.screenY), 400);
+        assert.ok(camState.velocityYaw < 0.12, 'Angular momentum must decay');
       });
     });
   });
 
-  // =========================================================================
-  // Combinatorial Set 5: Shape Switching × Storage State Transitions
-  // =========================================================================
-  describe('Combo Set 5: Shape Switching × Storage State Transitions', () => {
-    const transitions: { from: CoreShapeId; to: CoreShapeId; storageInit: string | null }[] = [
-      { from: 'sphere', to: 'torus', storageInit: null },
-      { from: 'torus', to: 'icosahedron', storageInit: 'torus' },
-      { from: 'icosahedron', to: 'helix', storageInit: 'icosahedron' },
-      { from: 'helix', to: 'tesseract', storageInit: 'helix' },
-      { from: 'tesseract', to: 'sphere', storageInit: 'tesseract' },
-    ];
+  // ---------------------------------------------------------------------------
+  // Combo 3: Simulation Speed Multiplier × Camera Focus Lerp
+  // ---------------------------------------------------------------------------
+  describe('Combo 3: Simulation Speed Multiplier × Camera Focus Lerp', () => {
+    const speedMultipliers = [0.1, 1.0, 5.0, 10.0];
 
-    transitions.forEach((t) => {
-      it(`C5: Transition [${t.from} -> ${t.to}] with Initial Storage [${t.storageInit}]`, () => {
-        if (t.storageInit) {
-          env.localStorage.setItem(STORAGE_KEYS.CORE_SHAPE, t.storageInit);
-        } else {
-          env.localStorage.clear();
+    speedMultipliers.forEach((speed) => {
+      it(`should converge focus lerp towards Neptune at [${speed}x] simulation speed`, () => {
+        context.setSimulationSpeed(speed);
+        context.setFocusedCelestial('neptune');
+
+        let currentOffset = { x: 0, y: 0, z: 0 };
+        const neptuneData = CELESTIAL_BODY_MAP.neptune;
+
+        for (let t = 0; t < 60; t++) {
+          const simTime = t * 0.016;
+          const targetWorld = PlanetariumEngine.getOrbitalPosition(neptuneData, simTime, speed);
+          currentOffset = PlanetariumEngine.lerpFocus(currentOffset, targetWorld, 0.15);
         }
 
-        const state = new AssistantStateMockEngine();
-        assert.strictEqual(state.getCoreShape(), t.from);
+        const finalTarget = PlanetariumEngine.getOrbitalPosition(neptuneData, 60 * 0.016, speed);
+        const distanceToTarget = Math.hypot(
+          currentOffset.x - finalTarget.x,
+          currentOffset.y - finalTarget.y,
+          currentOffset.z - finalTarget.z
+        );
 
-        state.selectShapeFromSettings(t.to);
-        assert.strictEqual(state.getCoreShape(), t.to);
-        assert.strictEqual(env.localStorage.getItem(STORAGE_KEYS.CORE_SHAPE), t.to);
+        assert.ok(
+          distanceToTarget < 20,
+          `Lerp focus distance (${distanceToTarget.toFixed(2)}) should converge near target (<20px)`
+        );
+      });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Combo 4: Saturn Centered Focus × Audio Reactivity × Pitch Extremes
+  // ---------------------------------------------------------------------------
+  describe('Combo 4: Saturn Centered Focus × Audio Reactivity × Pitch Extremes', () => {
+    const pitchAngles = [-1.4, 0.0, 1.4]; // Near min pitch, edge-on, near max pitch
+    const audioLevels = [0.0, 0.5, 1.0];
+
+    pitchAngles.forEach((pitch) => {
+      audioLevels.forEach((audio) => {
+        it(`should properly render and depth-sort Saturn rings at pitch [${pitch.toFixed(1)} rad] with audio [${audio}]`, () => {
+          const cam = {
+            ...CAMERA_DEFAULTS,
+            pitch,
+            targetFocus: 'saturn' as CelestialId,
+          };
+          const saturnWorldPos = PlanetariumEngine.getOrbitalPosition(CELESTIAL_BODY_MAP.saturn, 10.0);
+          const { backRings, frontRings } = PlanetariumEngine.getSaturnRingSegments(saturnWorldPos, cam, audio, 10.0);
+
+          assert.equal(backRings.length + frontRings.length, 48);
+          frontRings.forEach((seg) => {
+            assert.ok(Number.isFinite(seg.screenX) && Number.isFinite(seg.screenY));
+            assert.ok(seg.alpha >= 0.25 && seg.alpha <= 1.0, `Alpha ${seg.alpha} out of range [0.25, 1.0]`);
+          });
+        });
+      });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Combo 5: Hover Raycasting × Rapid Camera Rotation
+  // ---------------------------------------------------------------------------
+  describe('Combo 5: Hover Raycasting × Rapid Camera Rotation', () => {
+    it('should accurately raycast celestial bodies as camera rotates through full 360° yaw', () => {
+      let detections = 0;
+      for (let yaw = 0; yaw < Math.PI * 2; yaw += 0.2) {
+        const cam = { ...CAMERA_DEFAULTS, yaw };
+        const frame = PlanetariumEngine.renderFrame(0, cam);
+        // Raycast at center of screen (where Sun is located)
+        const hit = PlanetariumEngine.raycastHit(600, 400, frame.projectedBodies);
+        if (hit === 'sun') {
+          detections++;
+        }
+      }
+      assert.ok(detections > 10, 'Sun should be detected at screen center across multiple camera yaw angles');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Combo 6: Storage Target Restoration × Viewport Resizing
+  // ---------------------------------------------------------------------------
+  describe('Combo 6: Storage Target Restoration × Viewport Resizing', () => {
+    const viewports = [
+      { w: 375, h: 667, name: 'Mobile Portrait' },
+      { w: 768, h: 1024, name: 'Tablet' },
+      { w: 1920, h: 1080, name: 'Desktop Full HD' },
+      { w: 3840, h: 2160, name: '4K Ultra HD' },
+    ];
+
+    viewports.forEach((vp) => {
+      it(`should center stored target [Jupiter] correctly on ${vp.name} (${vp.w}x${vp.h})`, () => {
+        const storage = new MockStorageService(env.localStorage);
+        storage.savePlanetariumTarget('jupiter');
+
+        const reloadedTarget = storage.loadPlanetariumTarget();
+        assert.equal(reloadedTarget, 'jupiter');
+
+        const cam = { ...CAMERA_DEFAULTS, targetFocus: reloadedTarget };
+        const frame = PlanetariumEngine.renderFrame(5.0, cam, 0, 1.0, vp.w, vp.h);
+        const jup = frame.projectedBodies.find((b) => b.id === 'jupiter')!;
+
+        const expectedCenterX = vp.w / 2;
+        const expectedCenterY = vp.h / 2;
+
+        assert.ok(Math.abs(jup.screenX - expectedCenterX) < 1.0);
+        assert.ok(Math.abs(jup.screenY - expectedCenterY) < 1.0);
       });
     });
   });

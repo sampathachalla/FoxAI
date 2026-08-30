@@ -7,6 +7,35 @@ export interface SpeechRecognitionCallbacks {
   onEnd?: () => void;
 }
 
+// Words that typically signal the speaker isn't finished yet ("...and", "...so", "...um")
+const TRAILING_CONTINUATION_WORDS = new Set([
+  'and', 'but', 'or', 'so', 'because', 'to', 'the', 'a', 'an', 'is', 'are',
+  'um', 'uh', 'like', 'that', 'with', 'for', 'of', 'in', 'on', 'at', 'my',
+  'i', 'you', 'we', 'it', 'if', 'when', 'then', 'than', 'as', 'not',
+]);
+
+// Guesses a silence timeout from how the trailing text sounds: short when it reads as a
+// complete thought, longer when the last word suggests more is coming. Replaces a single
+// flat 2.2s wait (which was slow for short/finished utterances and still not reliably
+// long enough for ones that trail off) with something adaptive but still cheap/local —
+// no network call, no extra model, just a heuristic on the words already in hand.
+function estimateSilenceTimeout(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) return 900;
+
+  if (/[.!?]\s*$/.test(trimmed)) {
+    return 500;
+  }
+
+  const words = trimmed.split(/\s+/);
+  const lastWord = (words[words.length - 1] || '').toLowerCase().replace(/[^a-z']/g, '');
+  if (TRAILING_CONTINUATION_WORDS.has(lastWord)) {
+    return 1800;
+  }
+
+  return 900;
+}
+
 export class SpeechRecognitionService {
   private recognition: any = null;
   private isListening = false;
@@ -76,7 +105,8 @@ export class SpeechRecognitionService {
         // Stream interim preview to UI without cutting off
         callbacks.onResult?.(fullCombined, false);
 
-        // Reset silence timer on every detected syllable/word
+        // Reset silence timer on every detected syllable/word, with a duration guessed
+        // from how the trailing words sound (see estimateSilenceTimeout)
         clearTimeout(this.silenceTimer);
         this.silenceTimer = setTimeout(() => {
           if (this.isListening && !this.hasEmittedFinal) {
@@ -87,7 +117,7 @@ export class SpeechRecognitionService {
               this.stop();
             }
           }
-        }, 2200); // 2.2s of natural pause before concluding sentence
+        }, estimateSilenceTimeout(fullCombined));
       }
     };
 

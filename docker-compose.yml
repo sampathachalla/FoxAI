@@ -12,9 +12,11 @@ services:
     env_file:
       - path: ./api/.env
         required: false
+    volumes:
+      - ./api/agent/Tts/piper_models:/app/Tts/piper_models
     restart: unless-stopped
 
-  # Node.js / Express API server (port 3001)
+  # Node.js / Express API server + OpenWakeWord service, one container (ports 3001 & 8011)
   api:
     build:
       context: ./api
@@ -22,10 +24,20 @@ services:
     container_name: fox-jarvis-api
     ports:
       - "3001:3001"
+      - "8011:8011"
     environment:
       - PORT=3001
       - NODE_ENV=development
       - HERMES_FASTAPI_URL=http://python-agent:8000
+      - WAKEWORD_PORT=8011
+      - WAKEWORD_SERVICE_URL=http://127.0.0.1:8011
+      - WAKEWORD_PUBLIC_WS_URL=ws://localhost:8011/ws
+      - WAKEWORD_ENABLED=true
+      - WAKEWORD_PHRASE=Hey Jarvis
+      - WAKEWORD_MODEL_KEY=hey jarvis
+      - WAKEWORD_MODEL_PATH=
+      - WAKEWORD_THRESHOLD=0.5
+      - WAKEWORD_COOLDOWN_SECONDS=3.0
     env_file:
       - path: ./api/.env
         required: false

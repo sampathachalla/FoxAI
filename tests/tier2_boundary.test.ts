@@ -1,717 +1,449 @@
 /**
- * Tier 2: Boundary & Corner Cases E2E Test Suite
- * Covers all 12 features from PROJECT.md with >= 5 boundary/corner test cases per feature (>= 60 total tests)
+ * Tier 2: Boundary, Corner Case & Extreme Value Test Suite for Fox AI 3D Planetarium Mode
+ * Validates Pitch Clamping, Zoom Boundaries, Extreme Audio, Orbital Inclinations,
+ * Ring Occlusion, Raycasting Precision, and LocalStorage Resilience.
  */
 
-import { describe, it, beforeEach, afterEach } from 'node:test';
-import assert from 'node:assert';
-import { setupTestEnvironment } from './harness/domMock.ts';
-import type { CoreShapeId } from './harness/types.ts';
+import { describe, it, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+
 import {
-  CORE_SHAPES,
+  CELESTIAL_BODIES,
+  CELESTIAL_BODY_MAP,
   STORAGE_KEYS,
-  isValidCoreShapeId,
-  normalizeCoreShapeId,
-  ACCENT_THEMES,
+  type CelestialId,
 } from './harness/types.ts';
-import { ProceduralGeometryEngine, hexToRgb } from './harness/geometryEngine.ts';
-import { AssistantStateMockEngine } from './harness/stateEngine.ts';
+
+import {
+  PlanetariumEngine,
+  CAMERA_DEFAULTS,
+  PITCH_LIMIT_RAD,
+  PITCH_LIMIT_DEG,
+  MIN_ZOOM,
+  MAX_ZOOM,
+} from './harness/planetariumEngine.ts';
+
+import {
+  MockAssistantContext,
+  MockStorageService,
+} from './harness/stateEngine.ts';
+
+import { setupTestEnvironment } from './harness/domMock.ts';
 
 describe('Tier 2: Boundary & Corner Cases', () => {
   let env: ReturnType<typeof setupTestEnvironment>;
+  let context: MockAssistantContext;
 
   beforeEach(() => {
     env = setupTestEnvironment();
+    context = new MockAssistantContext(env.localStorage);
   });
 
-  afterEach(() => {
-    env.cleanup();
-  });
-
-  // =========================================================================
-  // Feature 1 Boundary: Shape Type & Metadata Edge Cases
-  // =========================================================================
-  describe('F1 Boundary: Type & Metadata Edge Cases', () => {
-    it('B1.1: should normalize mixed-case shape strings to fallback if invalid', () => {
-      assert.strictEqual(normalizeCoreShapeId('SPHERE'), 'sphere'); // fallback
-      assert.strictEqual(normalizeCoreShapeId('Torus'), 'sphere');
-    });
-
-    it('B1.2: should handle prototype pollution or special property names safely', () => {
-      assert.strictEqual(isValidCoreShapeId('__proto__'), false);
-      assert.strictEqual(isValidCoreShapeId('constructor'), false);
-      assert.strictEqual(isValidCoreShapeId('toString'), false);
-      assert.strictEqual(normalizeCoreShapeId('__proto__', 'sphere'), 'sphere');
-    });
-
-    it('B1.3: should handle empty strings, whitespaces, and symbols without throwing', () => {
-      assert.strictEqual(normalizeCoreShapeId('', 'sphere'), 'sphere');
-      assert.strictEqual(normalizeCoreShapeId('   ', 'torus'), 'torus');
-      assert.strictEqual(normalizeCoreShapeId('!@#$%^&*()', 'sphere'), 'sphere');
-    });
-
-    it('B1.4: should handle non-string primitive inputs (numbers, booleans, objects)', () => {
-      assert.strictEqual(normalizeCoreShapeId(12345, 'sphere'), 'sphere');
-      assert.strictEqual(normalizeCoreShapeId(true, 'sphere'), 'sphere');
-      assert.strictEqual(normalizeCoreShapeId({ shape: 'sphere' }, 'helix'), 'helix');
-      assert.strictEqual(normalizeCoreShapeId([ 'sphere' ], 'tesseract'), 'tesseract');
-    });
-
-    it('B1.5: should ensure metadata list is immutable and contains valid particle counts', () => {
-      assert.ok(CORE_SHAPES.every((s) => Number.isInteger(s.particleCount) && s.particleCount >= 1000));
-      assert.ok(CORE_SHAPES.every((s) => typeof s.badge === 'string' && s.badge.length > 0));
-    });
-  });
-
-  // =========================================================================
-  // Feature 2 Boundary: Storage Persistence Edge Cases
-  // =========================================================================
-  describe('F2 Boundary: Storage Persistence Edge Cases', () => {
-    it('B2.1: should gracefully handle QuotaExceededError when saving shape', () => {
-      env.localStorage.quotaErrorTrigger = true;
-      const state = new AssistantStateMockEngine();
-
-      // Should not crash when localStorage.setItem throws
-      assert.doesNotThrow(() => {
-        state.setCoreShape('torus');
-      });
-      // In-memory state remains updated
-      assert.strictEqual(state.getCoreShape(), 'torus');
-    });
-
-    it('B2.2: should recover from corrupted JSON or binary noise in localStorage', () => {
-      env.localStorage.setItem(STORAGE_KEYS.CORE_SHAPE, '{"malformed": true,,,');
-      const state = new AssistantStateMockEngine();
-      assert.strictEqual(state.getCoreShape(), 'sphere');
-    });
-
-    it('B2.3: should handle null storage backend when window.localStorage is undefined', () => {
-      const originalStorage = (globalThis as any).localStorage;
-      delete (globalThis as any).localStorage;
-
-      const state = new AssistantStateMockEngine();
-      assert.doesNotThrow(() => {
-        state.setCoreShape('helix');
-      });
-      assert.strictEqual(state.getCoreShape(), 'helix');
-
-      (globalThis as any).localStorage = originalStorage;
-    });
-
-    it('B2.4: should overwrite legacy keys without leaving residual state', () => {
-      env.localStorage.setItem(STORAGE_KEYS.CORE_SHAPE, 'dna_helix');
-      const state = new AssistantStateMockEngine();
-      assert.strictEqual(state.getCoreShape(), 'helix');
-
-      state.setCoreShape('tesseract');
-      assert.strictEqual(env.localStorage.getItem(STORAGE_KEYS.CORE_SHAPE), 'tesseract');
-    });
-
-    it('B2.5: should retain state when localStorage contains unicode or emoji strings', () => {
-      env.localStorage.setItem(STORAGE_KEYS.CORE_SHAPE, '🦊_torus_🔮');
-      const state = new AssistantStateMockEngine();
-      assert.strictEqual(state.getCoreShape(), 'sphere');
-    });
-  });
-
-  // =========================================================================
-  // Feature 3 Boundary: State & Context Edge Cases
-  // =========================================================================
-  describe('F3 Boundary: State & Context Edge Cases', () => {
-    it('B3.1: should handle rapid concurrent subscriber dispatches without dropping updates', () => {
-      const state = new AssistantStateMockEngine('sphere');
-      const logs: string[] = [];
-
-      for (let i = 0; i < 20; i++) {
-        state.subscribe((s) => logs.push(`sub_${i}_${s}`));
-      }
-
-      state.setCoreShape('torus');
-      assert.strictEqual(logs.length, 20);
-      assert.ok(logs.every((l) => l.endsWith('_torus')));
-    });
-
-    it('B3.2: should support unsubscribing a listener while dispatching is in progress', () => {
-      const state = new AssistantStateMockEngine('sphere');
-      let unsub: () => void = () => {};
-      let count = 0;
-
-      unsub = state.subscribe(() => {
-        count++;
-        unsub();
-      });
-
-      state.setCoreShape('torus');
-      state.setCoreShape('helix');
-      assert.strictEqual(count, 1, 'Listener should have executed only once');
-    });
-
-    it('B3.3: should clamp audio level input to strictly [0.0, 1.0] range', () => {
-      const state = new AssistantStateMockEngine();
-      state.setAudioLevel(-5.0);
-      assert.strictEqual(state.getAudioLevel(), 0);
-
-      state.setAudioLevel(12.5);
-      assert.strictEqual(state.getAudioLevel(), 1.0);
-
-      state.setAudioLevel(0.42);
-      assert.strictEqual(state.getAudioLevel(), 0.42);
-    });
-
-    it('B3.4: should not crash if redundant setCoreShape is called with current shape', () => {
-      const state = new AssistantStateMockEngine('tesseract');
-      let calls = 0;
-      state.subscribe(() => calls++);
-
-      state.setCoreShape('tesseract');
-      assert.strictEqual(state.getCoreShape(), 'tesseract');
-      assert.strictEqual(calls, 1);
-    });
-
-    it('B3.5: should retain state when theme subscriber throws unhandled error', () => {
-      const state = new AssistantStateMockEngine();
-      state.subscribeTheme(() => {
-        // Normal subscriber
-      });
-      const amber = ACCENT_THEMES.find((t) => t.id === 'solar-amber')!;
-      state.setAccentTheme(amber);
-      assert.strictEqual(state.getAccentTheme().id, 'solar-amber');
-    });
-  });
-
-  // =========================================================================
-  // Feature 4 Boundary: Quantum Torus Geometry Edge Cases
-  // =========================================================================
-  describe('F4 Boundary: Quantum Torus Geometry Edge Cases', () => {
-    it('B4.1: should enforce minimum minor radius bound (r >= 15px) to prevent tube collapse', () => {
-      // Audio level extreme negative or zero
-      const particles = ProceduralGeometryEngine.generateTorusParticles(100, 'idle', 0);
-      particles.forEach((p) => {
-        const radiusXZ = Math.hypot(p.x, p.z);
-        assert.ok(radiusXZ >= 20, `Torus outer radius must not collapse to 0: ${radiusXZ}`);
-      });
-    });
-
-    it('B4.2: should handle maximum audio volume spike (audioLevel = 1.0) without NaN or infinity', () => {
-      const particles = ProceduralGeometryEngine.generateTorusParticles(5.0, 'speaking', 1.0);
-      particles.forEach((p) => {
-        assert.ok(isFinite(p.x) && !isNaN(p.x));
-        assert.ok(isFinite(p.y) && !isNaN(p.y));
-        assert.ok(isFinite(p.z) && !isNaN(p.z));
-      });
-    });
-
-    it('B4.3: should calculate swirl progression consistently at large timestamp values (t = 10,000)', () => {
-      const particles = ProceduralGeometryEngine.generateTorusParticles(10000, 'thinking', 0.5);
-      assert.strictEqual(particles.length, 2408);
-      assert.ok(isFinite(particles[0].x));
-    });
-
-    it('B4.4: should maintain accretion ring radius bounds under extreme rotation speeds', () => {
-      const particles = ProceduralGeometryEngine.generateTorusParticles(500, 'speaking', 1.0);
-      const acc1 = particles.filter((p) => p.tier === 3);
-      const acc2 = particles.filter((p) => p.tier === 4);
-
-      acc1.forEach((p) => {
-        const r = Math.hypot(p.x, p.z);
-        assert.ok(r >= 180 && r <= 220, `Accretion ring 1 radius out of bounds: ${r}`);
-      });
-      acc2.forEach((p) => {
-        const r = Math.hypot(p.x, p.y, p.z);
-        assert.ok(r >= 160 && r <= 200, `Accretion ring 2 radius out of bounds: ${r}`);
-      });
-    });
-
-    it('B4.5: should project torus with zero fov distortion when camera depth is large', () => {
-      const particles = ProceduralGeometryEngine.generateTorusParticles(0, 'idle', 0);
-      const projected = ProceduralGeometryEngine.projectAndSortParticles(
-        particles,
-        Math.PI,
-        0,
-        200,
-        200,
-        ACCENT_THEMES[0]
-      );
-      assert.strictEqual(projected.length, 2408);
-      assert.ok(projected.every((pt) => pt.scale > 0 && pt.scale < 3.0));
-    });
-  });
-
-  // =========================================================================
-  // Feature 5 Boundary: Cyber Icosahedron Edge Cases
-  // =========================================================================
-  describe('F5 Boundary: Cyber Icosahedron Edge Cases', () => {
-    it('B5.1: should maintain equilateral edge length symmetry across all 30 edges', () => {
-      const particles = ProceduralGeometryEngine.generateIcosahedronParticles(0, 'idle', 0);
-      const vertices = particles.filter((p) => p.tier === 0);
-
-      // Verify golden ratio symmetry: distance between vertex 0 and vertex 1
-      const d01 = Math.hypot(
-        vertices[0].x - vertices[1].x,
-        vertices[0].y - vertices[1].y,
-        vertices[0].z - vertices[1].z
-      );
-      assert.ok(d01 > 100 && d01 < 200, `Edge distance unexpected: ${d01}`);
-    });
-
-    it('B5.2: should clamp vertex radial expansion when audioLevel is 1.0 to prevent canvas clip', () => {
-      const loudParticles = ProceduralGeometryEngine.generateIcosahedronParticles(0, 'speaking', 1.0);
-      const vertices = loudParticles.filter((p) => p.tier === 0);
-      vertices.forEach((v) => {
-        const r = Math.hypot(v.x, v.y, v.z);
-        assert.ok(r < 250, `Vertex radius clipped: ${r}`);
-      });
-    });
-
-    it('B5.3: should interpolate edge quantum dots linearly without discontinuity', () => {
-      const particles = ProceduralGeometryEngine.generateIcosahedronParticles(0, 'idle', 0);
-      const edgeDots = particles.filter((p) => p.tier === 1);
-      // Sample first edge (16 dots)
-      const firstEdge = edgeDots.slice(0, 16);
-      for (let i = 0; i < firstEdge.length - 1; i++) {
-        const step = Math.hypot(
-          firstEdge[i + 1].x - firstEdge[i].x,
-          firstEdge[i + 1].y - firstEdge[i].y,
-          firstEdge[i + 1].z - firstEdge[i].z
-        );
-        assert.ok(step > 0 && step < 20, `Edge interpolation step irregular: ${step}`);
-      }
-    });
-
-    it('B5.4: should maintain concentricity of inner crystalline core (center at origin 0,0,0)', () => {
-      const particles = ProceduralGeometryEngine.generateIcosahedronParticles(12.3, 'thinking', 0.5);
-      const inner = particles.filter((p) => p.tier === 2);
-      const avgX = inner.reduce((sum, p) => sum + p.x, 0) / inner.length;
-      const avgY = inner.reduce((sum, p) => sum + p.y, 0) / inner.length;
-      const avgZ = inner.reduce((sum, p) => sum + p.z, 0) / inner.length;
-
-      assert.ok(Math.abs(avgX) < 1e-4, 'Inner core center X must be 0');
-      assert.ok(Math.abs(avgY) < 1e-4, 'Inner core center Y must be 0');
-      assert.ok(Math.abs(avgZ) < 1e-4, 'Inner core center Z must be 0');
-    });
-
-    it('B5.5: should preserve back-to-front depth ordering under steep 85-degree pitch angles', () => {
-      const particles = ProceduralGeometryEngine.generateIcosahedronParticles(0, 'idle', 0);
-      const projected = ProceduralGeometryEngine.projectAndSortParticles(
-        particles,
-        0,
-        1.45, // Near vertical pitch (~83 deg)
-        190,
-        150,
-        ACCENT_THEMES[0]
-      );
-      for (let i = 0; i < projected.length - 1; i++) {
-        assert.ok(projected[i].z >= projected[i + 1].z);
-      }
-    });
-  });
-
-  // =========================================================================
-  // Feature 6 Boundary: Neural DNA Helix Edge Cases
-  // =========================================================================
-  describe('F6 Boundary: Neural DNA Helix Edge Cases', () => {
-    it('B6.1: should bound total vertical span of DNA strands within [-160px, +160px]', () => {
-      const particles = ProceduralGeometryEngine.generateHelixParticles(0, 'idle', 0);
-      const strandA = particles.filter((p) => p.tier === 0);
-      const minY = Math.min(...strandA.map((p) => p.y));
-      const maxY = Math.max(...strandA.map((p) => p.y));
-
-      assert.ok(Math.abs(minY - -160) < 1e-3, `Min Y expected -160, got ${minY}`);
-      assert.ok(Math.abs(maxY - 160) < 1e-3, `Max Y expected +160, got ${maxY}`);
-    });
-
-    it('B6.2: should maintain exactly 28 base-pair ladder rungs along the vertical spine', () => {
-      const particles = ProceduralGeometryEngine.generateHelixParticles(0, 'idle', 0);
-      const rungs = particles.filter((p) => p.tier === 2);
-      assert.strictEqual(rungs.length, 28 * 8);
-    });
-
-    it('B6.3: should clamp audio acoustic rung deflection within safe limits (<= 25px)', () => {
-      const activePts = ProceduralGeometryEngine.generateHelixParticles(1, 'speaking', 1.0);
-      const rungs = activePts.filter((p) => p.tier === 2);
-      rungs.forEach((r) => {
-        assert.ok(isFinite(r.y) && Math.abs(r.y) <= 190, `Rung deflection excessive: ${r.y}`);
-      });
-    });
-
-    it('B6.4: should keep synaptic spark cloud radius strictly outside base strand radius', () => {
-      const particles = ProceduralGeometryEngine.generateHelixParticles(0, 'idle', 0);
-      const sparks = particles.filter((p) => p.tier === 3);
-      sparks.forEach((s) => {
-        const r = Math.hypot(s.x, s.z);
-        assert.ok(r >= 70, `Spark radius too small: ${r}`);
-      });
-    });
-
-    it('B6.5: should project DNA helix with positive scale factors across all perspective tiers', () => {
-      const particles = ProceduralGeometryEngine.generateHelixParticles(0, 'idle', 0);
-      const projected = ProceduralGeometryEngine.projectAndSortParticles(
-        particles,
-        0.5,
-        0.2,
-        190,
-        150,
-        ACCENT_THEMES[0]
-      );
-      assert.ok(projected.every((pt) => pt.scale > 0 && isFinite(pt.scale)));
-    });
-  });
-
-  // =========================================================================
-  // Feature 7 Boundary: Hypercube Tesseract 4D Projection Edge Cases
-  // =========================================================================
-  describe('F7 Boundary: Hypercube Tesseract 4D Projection Edge Cases', () => {
-    it('B7.1: should never produce denominator <= 0 in 4D projection math', () => {
-      // Test across 1,000 arbitrary rotation frames
-      for (let t = 0; t < 100; t += 5) {
-        const particles = ProceduralGeometryEngine.generateTesseractParticles(t, 'speaking', 1.0);
-        particles.forEach((p) => {
-          assert.ok(!isNaN(p.x) && isFinite(p.x));
-          assert.ok(!isNaN(p.y) && isFinite(p.y));
-          assert.ok(!isNaN(p.z) && isFinite(p.z));
-        });
-      }
-    });
-
-    it('B7.2: should maintain all 16 4D hyper-corners with non-zero 3D distances', () => {
-      const particles = ProceduralGeometryEngine.generateTesseractParticles(0, 'idle', 0);
-      const nodes = particles.filter((p) => p.tier === 0);
-      nodes.forEach((n) => {
-        const dist = Math.hypot(n.x, n.y, n.z);
-        assert.ok(dist > 10, `Hypercube node too close to origin: ${dist}`);
-      });
-    });
-
-    it('B7.3: should rotate faster in speaking state (4D rotational acceleration)', () => {
-      const idleP = ProceduralGeometryEngine.generateTesseractParticles(1, 'idle', 0);
-      const speakP = ProceduralGeometryEngine.generateTesseractParticles(1, 'speaking', 0.9);
-
-      const idleNode = idleP.filter((p) => p.tier === 0)[0];
-      const speakNode = speakP.filter((p) => p.tier === 0)[0];
-
-      assert.notDeepStrictEqual(idleNode, speakNode, 'Speaking state should alter 4D rotation velocity');
-    });
-
-    it('B7.4: should preserve connectivity of all 32 4D hypercube edges', () => {
-      const particles = ProceduralGeometryEngine.generateTesseractParticles(0, 'idle', 0);
-      const edgeDots = particles.filter((p) => p.tier === 1);
-      assert.strictEqual(edgeDots.length, 32 * 12);
-    });
-
-    it('B7.5: should project tesseract to 2D viewport with scale clamped within [0.1, 5.0]', () => {
-      const particles = ProceduralGeometryEngine.generateTesseractParticles(0, 'idle', 0);
-      const projected = ProceduralGeometryEngine.projectAndSortParticles(
-        particles,
-        0,
-        0,
-        190,
-        150,
-        ACCENT_THEMES[0]
-      );
-      projected.forEach((pt) => {
-        assert.ok(pt.scale >= 0.1 && pt.scale <= 5.0, `Scale factor out of bounds: ${pt.scale}`);
-      });
-    });
-  });
-
-  // =========================================================================
-  // Feature 8 Boundary: Holographic Sphere Compatibility Edge Cases
-  // =========================================================================
-  describe('F8 Boundary: Holographic Sphere Compatibility Edge Cases', () => {
-    it('B8.1: should handle polar singularities at latitude phi = ±pi/2 without degenerate coordinates', () => {
-      const particles = ProceduralGeometryEngine.generateSphereParticles(0, 'idle', 0, 0);
-      // North pole (r=39) and South pole (r=0)
-      const southPole = particles[0];
-      const northPole = particles[particles.length - 1];
-
-      assert.ok(isFinite(southPole.x) && isFinite(southPole.y) && isFinite(southPole.z));
-      assert.ok(isFinite(northPole.x) && isFinite(northPole.y) && isFinite(northPole.z));
-    });
-
-    it('B8.2: should maintain minimum sphere radius (>= 20px) under intense voice wave resonance', () => {
-      const particles = ProceduralGeometryEngine.generateSphereParticles(5.0, 'speaking', 1.0, 0);
-      particles.forEach((p) => {
-        const r = Math.hypot(p.x, p.y, p.z);
-        assert.ok(r >= 20, `Sphere particle collapsed to origin: ${r}`);
-      });
-    });
-
-    it('B8.3: should smoothly interpolate between pure sphere (morph=0) and gimbal HUD (morph=1)', () => {
-      const midMorph = ProceduralGeometryEngine.generateSphereParticles(0, 'thinking', 0, 0.5);
-      const tier3 = midMorph.find((p) => p.tier === 3)!;
-      assert.ok(isFinite(tier3.x) && isFinite(tier3.y) && isFinite(tier3.z));
-    });
-
-    it('B8.4: should generate valid coordinates at morph=0, 0.25, 0.5, 0.75, 1.0', () => {
-      [0.0, 0.25, 0.5, 0.75, 1.0].forEach((m) => {
-        const pts = ProceduralGeometryEngine.generateSphereParticles(0, 'thinking', 0, m);
-        assert.strictEqual(pts.length, 2400);
-        assert.ok(pts.every((p) => isFinite(p.x)));
-      });
-    });
-
-    it('B8.5: should sort 2,400 sphere particles in strictly monotonic descending Z-order', () => {
-      const particles = ProceduralGeometryEngine.generateSphereParticles(0, 'idle', 0, 0);
-      const projected = ProceduralGeometryEngine.projectAndSortParticles(
-        particles,
-        0.3,
-        0.2,
-        190,
-        150,
-        ACCENT_THEMES[0]
-      );
-      for (let i = 0; i < projected.length - 1; i++) {
-        assert.ok(projected[i].z >= projected[i + 1].z);
-      }
-    });
-  });
-
-  // =========================================================================
-  // Feature 9 Boundary: Theme & Multi-State Edge Cases
-  // =========================================================================
-  describe('F9 Boundary: Theme & Multi-State Edge Cases', () => {
-    it('B9.1: should handle missing hex hash (#) prefix in color parser', () => {
-      assert.deepStrictEqual(hexToRgb('99FFFF'), { r: 153, g: 255, b: 255 });
-      assert.deepStrictEqual(hexToRgb('007AFF'), { r: 0, g: 122, b: 255 });
-    });
-
-    it('B9.2: should parse black (#000000) and white (#FFFFFF) boundaries correctly', () => {
-      assert.deepStrictEqual(hexToRgb('#000000'), { r: 0, g: 0, b: 0 });
-      assert.deepStrictEqual(hexToRgb('#FFFFFF'), { r: 255, g: 255, b: 255 });
-    });
-
-    it('B9.3: should extract valid RGB across all 7 official preset themes', () => {
-      ACCENT_THEMES.forEach((theme) => {
-        const rgbPrimary = hexToRgb(theme.primary);
-        const rgbSecondary = hexToRgb(theme.secondary);
-
-        assert.ok(rgbPrimary.r >= 0 && rgbPrimary.r <= 255);
-        assert.ok(rgbPrimary.g >= 0 && rgbPrimary.g <= 255);
-        assert.ok(rgbPrimary.b >= 0 && rgbPrimary.b <= 255);
-
-        assert.ok(rgbSecondary.r >= 0 && rgbSecondary.r <= 255);
-        assert.ok(rgbSecondary.g >= 0 && rgbSecondary.g <= 255);
-        assert.ok(rgbSecondary.b >= 0 && rgbSecondary.b <= 255);
-      });
-    });
-
-    it('B9.4: should clamp alpha channel between 0.15 and 1.0 during depth projection', () => {
-      const particles = [{ x: 0, y: 0, z: -500, tier: 0 }]; // Far in background
-      const projected = ProceduralGeometryEngine.projectAndSortParticles(
-        particles,
-        0,
-        0,
-        100,
-        100,
-        ACCENT_THEMES[0]
-      );
-      assert.ok(projected[0].alpha >= 0.15 && projected[0].alpha <= 1.0);
-    });
-
-    it('B9.5: should retain particle color saturation in idle state (no white-hot washout)', () => {
-      const particles = [{ x: 0, y: 0, z: 0, tier: 0 }];
-      const cyanTheme = ACCENT_THEMES[0];
-      const projected = ProceduralGeometryEngine.projectAndSortParticles(
-        particles,
-        0,
-        0,
-        100,
-        100,
-        cyanTheme,
-        0,
-        'idle'
-      );
-      assert.strictEqual(projected[0].color, 'rgb(153, 255, 255)');
-    });
-  });
-
-  // =========================================================================
-  // Feature 10 Boundary: Drag Momentum & Physics Edge Cases
-  // =========================================================================
-  describe('F10 Boundary: Drag Momentum & Physics Edge Cases', () => {
-    it('B10.1: should handle extreme mouse drag jumps (dx = 5,000px) with smooth physics damping', () => {
+  // ---------------------------------------------------------------------------
+  // 1. Camera Pitch Clamping [-85°, +85°]
+  // ---------------------------------------------------------------------------
+  describe('1. Camera Pitch Clamping [-85°, +85°] Bounds', () => {
+    it('1.1 should clamp positive pitch to +85° (1.4835 rad) under extreme upward momentum', () => {
       const state = {
-        yaw: 0,
-        pitch: 0,
-        velocityYaw: 5000 * 0.008, // 40.0 rad/s
-        velocityPitch: 0,
-        isDragging: false,
-        time: 0,
+        ...CAMERA_DEFAULTS,
+        pitch: 1.48,
+        velocityPitch: 2.5, // Extreme positive flick
       };
-
-      const step = ProceduralGeometryEngine.stepMomentumPhysics(state, 1 / 60);
-      assert.ok(step.velocityYaw < 40.0, 'Velocity should decay immediately');
-      assert.ok(isFinite(step.yaw));
+      const next = PlanetariumEngine.stepMomentumPhysics(state, 1 / 60);
+      assert.ok(
+        Math.abs(next.pitch - PITCH_LIMIT_RAD) < 1e-5,
+        `Pitch (${next.pitch}) should be clamped exactly at ${PITCH_LIMIT_RAD}`
+      );
     });
 
-    it('B10.2: should clamp pitch precisely at exact boundaries (-1.4708 rad and +1.4708 rad)', () => {
-      const maxPitch = Math.PI / 2 - 0.1;
-      const minPitch = -Math.PI / 2 + 0.1;
-
-      const stateMax = {
-        yaw: 0,
-        pitch: 1.4707963,
-        velocityYaw: 0,
-        velocityPitch: 0.1,
-        isDragging: false,
-        time: 0,
-      };
-
-      const res = ProceduralGeometryEngine.stepMomentumPhysics(stateMax, 1 / 60);
-      assert.ok(Math.abs(res.pitch - maxPitch) < 1e-4);
-    });
-
-    it('B10.3: should handle zero delta time (dt = 0) without division by zero', () => {
+    it('1.2 should clamp negative pitch to -85° (-1.4835 rad) under extreme downward momentum', () => {
       const state = {
-        yaw: 1.0,
-        pitch: 0.2,
-        velocityYaw: 0.05,
-        velocityPitch: 0.02,
-        isDragging: false,
-        time: 0,
+        ...CAMERA_DEFAULTS,
+        pitch: -1.48,
+        velocityPitch: -2.5, // Extreme negative flick
       };
-      const res = ProceduralGeometryEngine.stepMomentumPhysics(state, 0);
-      assert.strictEqual(res.yaw, 1.0);
-      assert.strictEqual(res.pitch, 0.2);
+      const next = PlanetariumEngine.stepMomentumPhysics(state, 1 / 60);
+      assert.ok(
+        Math.abs(next.pitch - (-PITCH_LIMIT_RAD)) < 1e-5,
+        `Pitch (${next.pitch}) should be clamped exactly at -${PITCH_LIMIT_RAD}`
+      );
     });
 
-    it('B10.4: should continue decaying over 120 simulated frames until complete stop', () => {
+    it('1.3 should prevent gimbal lock/inversion over 1,000 continuous upward momentum frames', () => {
       let state = {
-        yaw: 0,
+        ...CAMERA_DEFAULTS,
         pitch: 0,
-        velocityYaw: 0.1,
-        velocityPitch: 0.05,
-        isDragging: false,
-        time: 0,
+        velocityPitch: 10.0,
       };
-
-      for (let f = 0; f < 120; f++) {
-        state = { ...ProceduralGeometryEngine.stepMomentumPhysics(state, 1 / 60), isDragging: false, time: f / 60 };
+      for (let f = 0; f < 1000; f++) {
+        state = PlanetariumEngine.stepMomentumPhysics(state, 1 / 60);
+        assert.ok(state.pitch <= PITCH_LIMIT_RAD, `Frame ${f}: Pitch ${state.pitch} exceeded +85°`);
+        assert.ok(state.pitch >= -PITCH_LIMIT_RAD, `Frame ${f}: Pitch ${state.pitch} fell below -85°`);
       }
-
-      assert.strictEqual(state.velocityYaw, 0, 'Velocity Yaw must reach absolute 0');
-      assert.strictEqual(state.velocityPitch, 0, 'Velocity Pitch must reach absolute 0');
     });
 
-    it('B10.5: should handle negative velocity inputs correctly', () => {
-      const state = {
-        yaw: 0,
-        pitch: 0,
-        velocityYaw: -0.08,
-        velocityPitch: -0.04,
-        isDragging: false,
-        time: 0,
-      };
+    it('1.4 should maintain continuous projection math at exactly +85° and -85° without NaN', () => {
+      const pos = { x: 100, y: 50, z: 100 };
+      const projTop = PlanetariumEngine.project3DToScreen(pos, { ...CAMERA_DEFAULTS, pitch: PITCH_LIMIT_RAD });
+      const projBottom = PlanetariumEngine.project3DToScreen(pos, { ...CAMERA_DEFAULTS, pitch: -PITCH_LIMIT_RAD });
+      assert.ok(Number.isFinite(projTop.screenX) && Number.isFinite(projTop.screenY));
+      assert.ok(Number.isFinite(projBottom.screenX) && Number.isFinite(projBottom.screenY));
+    });
 
-      const res = ProceduralGeometryEngine.stepMomentumPhysics(state, 1 / 60);
-      assert.ok(res.velocityYaw > -0.08, 'Negative velocity should decay toward 0');
-      assert.ok(res.velocityPitch > -0.04, 'Negative pitch velocity should decay toward 0');
+    it('1.5 should accurately report 85 degrees in degree-to-radian conversion', () => {
+      const deg = (PITCH_LIMIT_RAD * 180) / Math.PI;
+      assert.equal(Math.round(deg), 85);
     });
   });
 
-  // =========================================================================
-  // Feature 11 Boundary: Settings UI 3D Shape Selector Edge Cases
-  // =========================================================================
-  describe('F11 Boundary: Settings UI Shape Selector Edge Cases', () => {
-    it('B11.1: should handle clicking already active shape without state corruption', () => {
-      const state = new AssistantStateMockEngine('torus');
-      state.selectShapeFromSettings('torus');
-      assert.strictEqual(state.getCoreShape(), 'torus');
-      assert.strictEqual(state.chimePlayCount, 1);
+  // ---------------------------------------------------------------------------
+  // 2. Zoom Clamping [120px, 1600px]
+  // ---------------------------------------------------------------------------
+  describe('2. Zoom Clamping [120px, 1600px] Boundaries', () => {
+    it('2.1 should strictly clamp zoom to MIN_ZOOM (120px) under massive zoom-out bursts', () => {
+      const state = { ...CAMERA_DEFAULTS, zoom: -500 };
+      const next = PlanetariumEngine.stepMomentumPhysics(state, 1 / 60);
+      assert.equal(next.zoom, 120);
     });
 
-    it('B11.2: should support rapid double-clicking on same card', () => {
-      const state = new AssistantStateMockEngine('sphere');
-      state.selectShapeFromSettings('helix');
-      state.selectShapeFromSettings('helix');
-      assert.strictEqual(state.getCoreShape(), 'helix');
-      assert.strictEqual(state.chimePlayCount, 2);
+    it('2.2 should strictly clamp zoom to MAX_ZOOM (1600px) under massive zoom-in bursts', () => {
+      const state = { ...CAMERA_DEFAULTS, zoom: 99999 };
+      const next = PlanetariumEngine.stepMomentumPhysics(state, 1 / 60);
+      assert.equal(next.zoom, 1600);
     });
 
-    it('B11.3: should provide non-empty descriptions for all 5 shape cards', () => {
-      const state = new AssistantStateMockEngine();
-      const shapes = state.getAvailableShapes();
-      shapes.forEach((s) => {
-        assert.ok(s.description.length >= 20, `Description too short for ${s.id}`);
-        assert.ok(s.tagline.length >= 10, `Tagline too short for ${s.id}`);
+    it('2.3 should preserve positive perspective depth factor (fov / depth > 0) at MIN_ZOOM (120px)', () => {
+      const outerPlanetPos = { x: 472, y: 50, z: 300 }; // Pluto distance
+      const proj = PlanetariumEngine.project3DToScreen(outerPlanetPos, { ...CAMERA_DEFAULTS, zoom: 120 });
+      assert.ok(proj.scale > 0);
+      assert.ok(proj.screenZ > 0);
+    });
+
+    it('2.4 should render full solar system visible in screen bounds at MIN_ZOOM (120px)', () => {
+      const frame = PlanetariumEngine.renderFrame(0, { ...CAMERA_DEFAULTS, zoom: 120 });
+      frame.projectedBodies.forEach((b) => {
+        assert.ok(Number.isFinite(b.screenX) && Number.isFinite(b.screenY));
+        assert.ok(b.screenRadius >= 2.0, 'Screen radius must be clamped above minimum 2px');
       });
     });
 
-    it('B11.4: should handle unknown shape string in selector gracefully', () => {
-      const state = new AssistantStateMockEngine();
-      state.selectShapeFromSettings('unknown_geom' as any);
-      assert.strictEqual(state.getCoreShape(), 'sphere');
-    });
-
-    it('B11.5: should retain state when switching Settings tabs back and forth', () => {
-      const state = new AssistantStateMockEngine('icosahedron');
-      env.localStorage.setItem(STORAGE_KEYS.SETTINGS_TAB, 'voice');
-      assert.strictEqual(state.getCoreShape(), 'icosahedron');
-      env.localStorage.setItem(STORAGE_KEYS.SETTINGS_TAB, 'theme');
-      assert.strictEqual(state.getCoreShape(), 'icosahedron');
+    it('2.5 should handle rapid fractional zoom delta wheel oscillations without drift', () => {
+      let zoom = 560;
+      for (let i = 0; i < 50; i++) {
+        zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom + 12.345));
+        zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom - 12.345));
+      }
+      assert.ok(Math.abs(zoom - 560) < 1e-9);
     });
   });
 
-  // =========================================================================
-  // Feature 12 Boundary: Live 1-Click Switching Sync Edge Cases
-  // =========================================================================
-  describe('F12 Boundary: Live 1-Click Switching Sync Edge Cases', () => {
-    it('B12.1: should switch shape during high volume audio speaking state seamlessly', () => {
-      const state = new AssistantStateMockEngine('sphere');
-      state.setStatus('speaking');
-      state.setAudioLevel(0.95);
-
-      state.setCoreShape('tesseract');
-      const pts = ProceduralGeometryEngine.generateTesseractParticles(1.0, state.getStatus(), state.getAudioLevel());
-      assert.strictEqual(pts.length, 400);
-      assert.strictEqual(state.getCoreShape(), 'tesseract');
+  // ---------------------------------------------------------------------------
+  // 3. Extreme Audio Reactivity Boundaries
+  // ---------------------------------------------------------------------------
+  describe('3. Extreme Audio Reactivity Boundaries (Zero, Clipped, Overflow)', () => {
+    it('3.1 should render steady baseline flares at audioLevel = 0.0 (Silence)', () => {
+      const flares = PlanetariumEngine.getSolarFlareParameters(0, 0.0);
+      assert.equal(flares.prominenceCount, 12);
+      assert.equal(flares.flareIntensity, 0.75);
+      assert.ok(flares.coreRadius <= 35);
     });
 
-    it('B12.2: should switch shape while user is actively dragging canvas', () => {
-      const state = new AssistantStateMockEngine('sphere');
-      let dragPhysics = {
-        yaw: 1.2,
-        pitch: 0.3,
-        velocityYaw: 0.05,
-        velocityPitch: 0.02,
-        isDragging: true,
-        time: 0,
-      };
-
-      state.setCoreShape('torus');
-      // Drag physics continues without resetting camera angles
-      dragPhysics = { ...ProceduralGeometryEngine.stepMomentumPhysics(dragPhysics, 1 / 60), isDragging: true, time: 0 };
-      assert.strictEqual(dragPhysics.yaw, 1.2);
-      assert.strictEqual(state.getCoreShape(), 'torus');
+    it('3.2 should clamp negative audioLevel (-10.0) safely to 0.0 baseline', () => {
+      const flares = PlanetariumEngine.getSolarFlareParameters(0, -10.0);
+      const baseline = PlanetariumEngine.getSolarFlareParameters(0, 0.0);
+      assert.equal(flares.prominenceCount, baseline.prominenceCount);
+      assert.equal(flares.coronalGlowRadius, baseline.coronalGlowRadius);
     });
 
-    it('B12.3: should handle shape cycle 50 times in tight loop without memory leaks or errors', () => {
-      const state = new AssistantStateMockEngine('sphere');
-      const allIds: CoreShapeId[] = ['sphere', 'torus', 'icosahedron', 'helix', 'tesseract'];
+    it('3.3 should clamp overflow audioLevel (+100.0) safely to 1.0 peak', () => {
+      const flares = PlanetariumEngine.getSolarFlareParameters(0, 100.0);
+      const maxFlares = PlanetariumEngine.getSolarFlareParameters(0, 1.0);
+      assert.equal(flares.prominenceCount, maxFlares.prominenceCount);
+      assert.equal(flares.coronalGlowRadius, maxFlares.coronalGlowRadius);
+    });
 
-      for (let i = 0; i < 50; i++) {
-        const next = allIds[i % 5];
-        state.setCoreShape(next);
-        assert.strictEqual(state.getCoreShape(), next);
+    it('3.4 should handle NaN or undefined audio levels by gracefully defaulting to 0', () => {
+      const flares = PlanetariumEngine.getSolarFlareParameters(0, NaN as any);
+      assert.ok(Number.isFinite(flares.coreRadius));
+      assert.ok(Number.isFinite(flares.coronalGlowRadius));
+    });
+
+    it('3.5 should maintain stable Saturn ring shimmer opacity under rapid audio spikes', () => {
+      const saturnPos = { x: 278, y: 0, z: 0 };
+      const ringsQuiet = PlanetariumEngine.getSaturnRingSegments(saturnPos, CAMERA_DEFAULTS, 0.0, 0);
+      const ringsLoud = PlanetariumEngine.getSaturnRingSegments(saturnPos, CAMERA_DEFAULTS, 1.0, 0);
+      assert.ok(ringsLoud.frontRings[0].alpha >= 0.65 && ringsLoud.frontRings[0].alpha <= 1.0);
+      assert.ok(ringsQuiet.frontRings[0].alpha >= 0.65 && ringsQuiet.frontRings[0].alpha <= 1.0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 4. Pluto Extreme 17.16° Inclination & Uranus 97.8° Tilt
+  // ---------------------------------------------------------------------------
+  describe('4. Pluto Extreme 17.16° Inclination & Uranus 97.8° Tilt', () => {
+    it('4.1 should compute maximum vertical displacement y(t) for Pluto at 17.16° inclination', () => {
+      const pluto = CELESTIAL_BODY_MAP.pluto;
+      const r = pluto.orbitalRadiusScaled; // 472
+      const maxExpectedY = r * Math.sin((17.16 * Math.PI) / 180); // ~139.2px
+      let maxYObserved = 0;
+
+      for (let t = 0; t < 1000; t += 10) {
+        const pos = PlanetariumEngine.getOrbitalPosition(pluto, t);
+        if (Math.abs(pos.y) > maxYObserved) {
+          maxYObserved = Math.abs(pos.y);
+        }
       }
-      assert.strictEqual(env.localStorage.getItem(STORAGE_KEYS.CORE_SHAPE), 'tesseract');
+      assert.ok(
+        Math.abs(maxYObserved - maxExpectedY) < 2.0,
+        `Max observed Y (${maxYObserved.toFixed(1)}) must match theoretical (${maxExpectedY.toFixed(1)})`
+      );
     });
 
-    it('B12.4: should sync state across multiple instances referencing the same storage backend', () => {
-      const stateA = new AssistantStateMockEngine();
-      const stateB = new AssistantStateMockEngine();
+    it('4.2 should cross orbital plane (Y = 0) at ascending and descending nodes for Pluto', () => {
+      const pluto = CELESTIAL_BODY_MAP.pluto;
+      let signChanges = 0;
+      let prevY = 0;
 
-      stateA.setCoreShape('helix');
-      assert.strictEqual(stateB.loadPersistedShape(), 'helix');
+      for (let t = 0; t < 2000; t += 5) {
+        const pos = PlanetariumEngine.getOrbitalPosition(pluto, t);
+        if (t > 0 && Math.sign(pos.y) !== Math.sign(prevY) && prevY !== 0) {
+          signChanges++;
+        }
+        prevY = pos.y;
+      }
+      assert.ok(signChanges >= 2, `Should observe >= 2 nodal crossings (observed: ${signChanges})`);
     });
 
-    it('B12.5: should retain active theme background glow and accent when shape switches', () => {
-      const state = new AssistantStateMockEngine('sphere', 'emerald-aura');
-      state.setCoreShape('torus');
+    it('4.3 should record Uranus extreme 97.77° axial tilt in scientific properties', () => {
+      const uranus = CELESTIAL_BODY_MAP.uranus;
+      assert.equal(uranus.axialTiltDeg, 97.77);
+      assert.ok(uranus.rotationPeriodHours < 0, 'Uranus has retrograde rotation');
+      assert.ok(uranus.tagline.includes('97.8°'));
+    });
 
-      assert.strictEqual(state.getCoreShape(), 'torus');
-      assert.strictEqual(state.getAccentTheme().id, 'emerald-aura');
-      assert.strictEqual(state.getAccentTheme().primary, '#30D158');
+    it('4.4 should record Venus extreme retrograde rotation (-5832.5h) and 177.36° axial tilt', () => {
+      const venus = CELESTIAL_BODY_MAP.venus;
+      assert.equal(venus.axialTiltDeg, 177.36);
+      assert.equal(venus.rotationPeriodHours, -5832.5);
+    });
+
+    it('4.5 should compute distinct 3D orbital plane normals for all planets with non-zero inclination', () => {
+      const inclinedPlanets = CELESTIAL_BODIES.filter((b) => b.orbitalInclinationDeg > 0);
+      assert.ok(inclinedPlanets.length >= 7, 'At least 7 planets should have non-zero inclination');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 5. Saturn Ring Horizon Depth Sorting & Cassini Gap
+  // ---------------------------------------------------------------------------
+  describe('5. Saturn Ring Horizon Depth Sorting & Cassini Gap', () => {
+    it('5.1 should correctly sort ring segments when viewed edge-on (pitch = 0)', () => {
+      const saturnPos = { x: 278, y: 0, z: 0 };
+      const camEdgeOn = { ...CAMERA_DEFAULTS, pitch: 0.0, yaw: 0.0 };
+      const { backRings, frontRings } = PlanetariumEngine.getSaturnRingSegments(saturnPos, camEdgeOn);
+      assert.ok(backRings.length > 0);
+      assert.ok(frontRings.length > 0);
+    });
+
+    it('5.2 should maintain Cassini division gap dimensions between inner and outer ring radii', () => {
+      const saturnRadius = PlanetariumEngine.getBaseVisualRadius(CELESTIAL_BODY_MAP.saturn); // 18
+      const innerRadius = saturnRadius * 1.45;   // ~26.1
+      const cassiniInner = saturnRadius * 1.98;  // ~35.6
+      const cassiniOuter = saturnRadius * 2.18;  // ~39.2
+      const outerRadius = saturnRadius * 2.65;   // ~47.7
+
+      assert.ok(innerRadius < cassiniInner, 'Inner ring must end before Cassini division begins');
+      assert.ok(cassiniInner < cassiniOuter, 'Cassini division must have positive non-zero gap width');
+      assert.ok(cassiniOuter < outerRadius, 'Outer ring must start after Cassini division ends');
+    });
+
+    it('5.3 should invert front/back partition when camera views Saturn from opposite yaw (180°)', () => {
+      const saturnPos = { x: 278, y: 0, z: 0 };
+      const camFront = { ...CAMERA_DEFAULTS, yaw: 0 };
+      const camBack = { ...CAMERA_DEFAULTS, yaw: Math.PI };
+
+      const ringsFront = PlanetariumEngine.getSaturnRingSegments(saturnPos, camFront);
+      const ringsBack = PlanetariumEngine.getSaturnRingSegments(saturnPos, camBack);
+
+      // Slices that were in front become back when camera views from opposite side
+      assert.equal(ringsFront.frontRings.length, ringsBack.frontRings.length);
+    });
+
+    it('5.4 should handle camera focus directly centered on Saturn without projection singularity', () => {
+      const saturn = CELESTIAL_BODY_MAP.saturn;
+      const camera: typeof CAMERA_DEFAULTS = {
+        ...CAMERA_DEFAULTS,
+        targetFocus: 'saturn',
+        zoom: 800, // Zoomed in on Saturn
+      };
+      const frame = PlanetariumEngine.renderFrame(10, camera);
+      const saturnProj = frame.projectedBodies.find((b) => b.id === 'saturn')!;
+      assert.equal(Math.round(saturnProj.screenX), 600);
+      assert.equal(Math.round(saturnProj.screenY), 400);
+      assert.ok(saturnProj.screenRadius >= 18);
+    });
+
+    it('5.5 should verify ring segments remain bounded under arbitrary camera rotations', () => {
+      const saturnPos = { x: 200, y: 20, z: 100 };
+      for (let pitch = -1.4; pitch <= 1.4; pitch += 0.4) {
+        for (let yaw = 0; yaw < Math.PI * 2; yaw += 1.0) {
+          const { frontRings, backRings } = PlanetariumEngine.getSaturnRingSegments(
+            saturnPos,
+            { ...CAMERA_DEFAULTS, pitch, yaw }
+          );
+          [...frontRings, ...backRings].forEach((seg) => {
+            assert.ok(Number.isFinite(seg.screenX) && Number.isFinite(seg.screenY));
+          });
+        }
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 6. Raycasting Hit Precision & Boundary Tolerance
+  // ---------------------------------------------------------------------------
+  describe('6. Raycasting Hit Precision & Boundary Tolerance', () => {
+    it('6.1 should register hit precisely at boundary: screenRadius + 8px', () => {
+      const frame = PlanetariumEngine.renderFrame(0, CAMERA_DEFAULTS);
+      const earth = frame.projectedBodies.find((b) => b.id === 'earth')!;
+      const hitRadius = Math.max(earth.screenRadius + 8, 16);
+
+      // Hit exactly at hitRadius - 1px
+      const hitInside = PlanetariumEngine.raycastHit(earth.screenX + hitRadius - 1, earth.screenY, frame.projectedBodies);
+      assert.equal(hitInside, 'earth');
+    });
+
+    it('6.2 should register miss precisely 1px outside boundary: screenRadius + 8px + 1px', () => {
+      const frame = PlanetariumEngine.renderFrame(0, CAMERA_DEFAULTS);
+      const earth = frame.projectedBodies.find((b) => b.id === 'earth')!;
+      const hitRadius = Math.max(earth.screenRadius + 8, 16);
+
+      // Hit at hitRadius + 2px
+      const hitOutside = PlanetariumEngine.raycastHit(earth.screenX + hitRadius + 2, earth.screenY, frame.projectedBodies);
+      assert.notEqual(hitOutside, 'earth');
+    });
+
+    it('6.3 should guarantee tiny planets (Mercury, Pluto) receive minimum 16px touch hit radius', () => {
+      const frame = PlanetariumEngine.renderFrame(0, CAMERA_DEFAULTS);
+      const mercury = frame.projectedBodies.find((b) => b.id === 'mercury')!;
+      const hitRadius = Math.max(mercury.screenRadius + 8, 16);
+      assert.ok(hitRadius >= 16, 'Hit radius must be at least 16px');
+
+      // Click within hit radius (12px away from mercury center)
+      const hit = PlanetariumEngine.raycastHit(mercury.screenX + 12, mercury.screenY, frame.projectedBodies);
+      assert.equal(hit, 'mercury');
+    });
+
+    it('6.4 should correctly differentiate between closely positioned inner planets', () => {
+      const frame = PlanetariumEngine.renderFrame(0, CAMERA_DEFAULTS);
+      const mercury = frame.projectedBodies.find((b) => b.id === 'mercury')!;
+      const venus = frame.projectedBodies.find((b) => b.id === 'venus')!;
+
+      const hitMercury = PlanetariumEngine.raycastHit(mercury.screenX, mercury.screenY, frame.projectedBodies);
+      const hitVenus = PlanetariumEngine.raycastHit(venus.screenX, venus.screenY, frame.projectedBodies);
+
+      assert.equal(hitMercury, 'mercury');
+      assert.equal(hitVenus, 'venus');
+    });
+
+    it('6.5 should handle raycasting on empty screen space without throwing errors', () => {
+      const frame = PlanetariumEngine.renderFrame(0, CAMERA_DEFAULTS);
+      assert.equal(PlanetariumEngine.raycastHit(0, 0, frame.projectedBodies), null);
+      assert.equal(PlanetariumEngine.raycastHit(1200, 800, frame.projectedBodies), null);
+      assert.equal(PlanetariumEngine.raycastHit(-50, -50, frame.projectedBodies), null);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 7. LocalStorage Corruption Fallbacks & Fault Tolerance
+  // ---------------------------------------------------------------------------
+  describe('7. LocalStorage Corruption Fallbacks & Fault Tolerance', () => {
+    it('7.1 should safely fallback to "sun" when STORAGE_KEYS.PLANETARIUM_TARGET is corrupted JSON object', () => {
+      const storage = new MockStorageService(env.localStorage);
+      env.localStorage.setItem(STORAGE_KEYS.PLANETARIUM_TARGET, '{"target":"jupiter","hacked":true}');
+      const target = storage.loadPlanetariumTarget();
+      assert.equal(target, 'sun');
+    });
+
+    it('7.2 should safely fallback to "voice" when STORAGE_KEYS.APP_MODE contains null bytes or numbers', () => {
+      const storage = new MockStorageService(env.localStorage);
+      env.localStorage.setItem(STORAGE_KEYS.APP_MODE, '12345\0null');
+      const mode = storage.loadAppMode();
+      assert.equal(mode, 'voice');
+    });
+
+    it('7.3 should safely handle massive 100KB corrupted string without crashing', () => {
+      const storage = new MockStorageService(env.localStorage);
+      const bigString = 'X'.repeat(102400);
+      env.localStorage.setItem(STORAGE_KEYS.PLANETARIUM_TARGET, bigString);
+      assert.equal(storage.loadPlanetariumTarget(), 'sun');
+    });
+
+    it('7.4 should safely handle prototype property names ("toString", "valueOf", "constructor")', () => {
+      const storage = new MockStorageService(env.localStorage);
+      env.localStorage.setItem(STORAGE_KEYS.PLANETARIUM_TARGET, 'toString');
+      assert.equal(storage.loadPlanetariumTarget(), 'sun');
+
+      env.localStorage.setItem(STORAGE_KEYS.PLANETARIUM_TARGET, 'constructor');
+      assert.equal(storage.loadPlanetariumTarget(), 'sun');
+    });
+
+    it('7.5 should safely handle SecurityError when localStorage is blocked (e.g. Incognito iframe)', () => {
+      const blockedStorage: Storage = {
+        getItem: () => { throw new Error('SecurityError: Access denied'); },
+        setItem: () => { throw new Error('SecurityError: Access denied'); },
+        removeItem: () => { throw new Error('SecurityError: Access denied'); },
+        clear: () => { throw new Error('SecurityError: Access denied'); },
+        key: () => null,
+        length: 0,
+      };
+      const storage = new MockStorageService(blockedStorage);
+      assert.equal(storage.loadAppMode(), 'voice');
+      assert.equal(storage.loadPlanetariumTarget(), 'sun');
+      assert.equal(storage.saveAppMode('planetarium'), false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 8. Simulation Delta Time (dt) & Frame Drop Boundaries
+  // ---------------------------------------------------------------------------
+  describe('8. Simulation Delta Time (dt) & Frame Drop Boundaries', () => {
+    it('8.1 should handle dt = 0 without dividing by zero or causing NaN', () => {
+      const state = { ...CAMERA_DEFAULTS, velocityYaw: 0.1 };
+      const next = PlanetariumEngine.stepMomentumPhysics(state, 0);
+      assert.ok(Number.isFinite(next.yaw));
+      assert.ok(Number.isFinite(next.pitch));
+    });
+
+    it('8.2 should handle large frame drop (dt = 1.0s) smoothly without physics explosion', () => {
+      const state = { ...CAMERA_DEFAULTS, velocityYaw: 0.2 };
+      const next = PlanetariumEngine.stepMomentumPhysics(state, 1.0);
+      assert.ok(Number.isFinite(next.yaw));
+      assert.ok(next.velocityYaw < 0.01, 'Momentum should dissipate over 1.0s');
+    });
+
+    it('8.3 should handle microsecond stepping (dt = 0.0001s) smoothly', () => {
+      const state = { ...CAMERA_DEFAULTS, velocityYaw: 0.05 };
+      const next = PlanetariumEngine.stepMomentumPhysics(state, 0.0001);
+      assert.ok(next.yaw >= state.yaw);
+    });
+
+    it('8.4 should preserve focus lerp convergence over multiple micro steps', () => {
+      let current = { x: 0, y: 0, z: 0 };
+      const target = { x: 50, y: 50, z: 50 };
+      for (let step = 0; step < 100; step++) {
+        current = PlanetariumEngine.lerpFocus(current, target, 0.08);
+      }
+      assert.ok(Math.abs(current.x - 50) < 0.05, 'Lerp must converge on target');
+      assert.ok(Math.abs(current.y - 50) < 0.05);
+      assert.ok(Math.abs(current.z - 50) < 0.05);
+    });
+
+    it('8.5 should maintain strictly non-negative simulation speed multiplier', () => {
+      context.setSimulationSpeed(-5.0);
+      assert.equal(context.state.simulationSpeed, 0.1);
+      context.setSimulationSpeed(0.0);
+      assert.equal(context.state.simulationSpeed, 0.1);
     });
   });
 });

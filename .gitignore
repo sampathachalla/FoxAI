@@ -18,3 +18,4 @@ api/.env
 api/.env*
 !.env.example
 !api/.env.example
+.agents/

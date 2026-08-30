@@ -12,6 +12,8 @@ interface Point3D {
   size?: number;
   colorType?: 'primary' | 'secondary' | 'white' | 'accent';
   alpha?: number;
+  customColor?: string;
+  customGlow?: string;
 }
 
 interface ProjectedPoint {
@@ -498,6 +500,230 @@ function generateTesseractPoints(
   return { particles, projected3DVertices, edges: TESSERACT_EDGES };
 }
 
+// 6. 3D Planetarium: Central Sun & All 9 Revolving Planets + Saturn Rings (2,400+ particles)
+function generatePlanetariumPoints(
+  time: number,
+  status: AssistantStatus,
+  audioLevel: number,
+  bassEnergy: number = 0
+): Point3D[] {
+  const particles: Point3D[] = [];
+  const effectiveAudio = Math.max(audioLevel, bassEnergy);
+  const isSpeaking = status === 'speaking';
+  const isListening = status === 'listening';
+  const vocalCadence = isSpeaking
+    ? 0.70 + Math.sin(time * 2.8) * 0.25 + audioLevel * 0.5
+    : isListening
+    ? 0.40 + audioLevel * 0.4
+    : 0.08;
+
+  // 1. Central Luminous Sun Core (320 particles)
+  const sunRadius = 34 * (1.0 + vocalCadence * 0.35);
+  const SUN_ROWS = 16;
+  const SUN_COLS = 20;
+  for (let r = 0; r < SUN_ROWS; r++) {
+    const phi = ((r + 0.5) / SUN_ROWS) * Math.PI - Math.PI / 2;
+    for (let c = 0; c < SUN_COLS; c++) {
+      const theta = (c / SUN_COLS) * Math.PI * 2;
+      const flare = Math.sin(time * 4.0 + theta * 3.0 + phi * 2.0) * (vocalCadence * 6.0);
+      const rSun = sunRadius + flare;
+      const x = rSun * Math.cos(phi) * Math.sin(theta);
+      const y = rSun * Math.sin(phi);
+      const z = rSun * Math.cos(phi) * Math.cos(theta);
+
+      const colorIntensity = Math.sin(time * 3 + theta * 2) * 0.3 + 0.7;
+      const rCol = 255;
+      const gCol = Math.floor(180 + colorIntensity * 60);
+      const bCol = Math.floor(40 + colorIntensity * 40);
+
+      particles.push({
+        x,
+        y,
+        z,
+        tier: 0,
+        size: 1.8 + (r % 2 === 0 ? 0.6 : 0),
+        customColor: `rgb(${rCol}, ${gCol}, ${bCol})`,
+        customGlow: `rgba(255, 180, 0, ${0.75 + vocalCadence * 0.25})`,
+      });
+    }
+  }
+
+  // Solar Coronal Plasma Jets (80 particles)
+  for (let i = 0; i < 80; i++) {
+    const jetAngle = (i / 80) * Math.PI * 2 + time * 0.6;
+    const jetDist = sunRadius * (1.1 + Math.sin(i * 13.7 + time * 5.0) * 0.6 * (1 + vocalCadence));
+    const jetZ = Math.sin(i * 31.3 + time * 2.0) * 12;
+    particles.push({
+      x: jetDist * Math.cos(jetAngle),
+      y: jetDist * Math.sin(jetAngle) * 0.85,
+      z: jetZ,
+      tier: 0,
+      size: 1.4,
+      customColor: '#FFA500',
+      customGlow: 'rgba(255, 140, 0, 0.8)',
+    });
+  }
+
+  // 2. All 9 Revolving Planets Specifications
+  const PLANET_SPECS: {
+    name: string;
+    orbitRadius: number;
+    orbitSpeed: number;
+    visualRadius: number;
+    primaryColor: string;
+    secondaryColor: string;
+    particleCount: number;
+    inclination?: number;
+    hasRings?: boolean;
+    hasMoon?: boolean;
+  }[] = [
+    { name: 'mercury', orbitRadius: 52, orbitSpeed: 4.15, visualRadius: 4.2, primaryColor: '#A8A5A0', secondaryColor: '#787570', particleCount: 35 },
+    { name: 'venus', orbitRadius: 78, orbitSpeed: 1.62, visualRadius: 6.8, primaryColor: '#E8C382', secondaryColor: '#B87333', particleCount: 55 },
+    { name: 'earth', orbitRadius: 108, orbitSpeed: 1.0, visualRadius: 7.5, primaryColor: '#3498DB', secondaryColor: '#2ECC71', particleCount: 75, hasMoon: true },
+    { name: 'mars', orbitRadius: 138, orbitSpeed: 0.53, visualRadius: 5.4, primaryColor: '#E05638', secondaryColor: '#8E2812', particleCount: 50 },
+    { name: 'jupiter', orbitRadius: 182, orbitSpeed: 0.084, visualRadius: 16.0, primaryColor: '#E0A96D', secondaryColor: '#A66A38', particleCount: 160 },
+    { name: 'saturn', orbitRadius: 232, orbitSpeed: 0.034, visualRadius: 13.5, primaryColor: '#EBD49D', secondaryColor: '#C2A662', particleCount: 120, hasRings: true },
+    { name: 'uranus', orbitRadius: 282, orbitSpeed: 0.012, visualRadius: 9.5, primaryColor: '#7DE8E8', secondaryColor: '#4AA8A8', particleCount: 75, inclination: 0.06 },
+    { name: 'neptune', orbitRadius: 330, orbitSpeed: 0.006, visualRadius: 9.2, primaryColor: '#407BFF', secondaryColor: '#1A3B8B', particleCount: 75, inclination: 0.04 },
+    { name: 'pluto', orbitRadius: 375, orbitSpeed: 0.004, visualRadius: 3.8, primaryColor: '#C7A783', secondaryColor: '#7A5839', particleCount: 30, inclination: 0.28 },
+  ];
+
+  PLANET_SPECS.forEach((planet, pIdx) => {
+    // Current orbital angle
+    const orbitalSpeedMult = 0.35;
+    const baseAngle = time * planet.orbitSpeed * orbitalSpeedMult + (pIdx * ((Math.PI * 2) / 9));
+    const inc = planet.inclination ?? Math.sin(pIdx * 4.3) * 0.03;
+
+    // Planet center in 3D space
+    const pCenterX = planet.orbitRadius * Math.cos(baseAngle);
+    const pCenterY = planet.orbitRadius * Math.sin(baseAngle) * Math.sin(inc) * 0.5;
+    const pCenterZ = planet.orbitRadius * Math.sin(baseAngle) * Math.cos(inc);
+
+    // Planet Body Sphere Particles
+    const pRows = Math.max(4, Math.floor(Math.sqrt(planet.particleCount)));
+    const pCols = Math.max(6, Math.floor(planet.particleCount / pRows));
+
+    for (let r = 0; r < pRows; r++) {
+      const pPhi = ((r + 0.5) / pRows) * Math.PI - Math.PI / 2;
+      for (let c = 0; c < pCols; c++) {
+        const pTheta = (c / pCols) * Math.PI * 2;
+        const pRad = planet.visualRadius;
+        const lx = pRad * Math.cos(pPhi) * Math.sin(pTheta);
+        const ly = pRad * Math.sin(pPhi);
+        const lz = pRad * Math.cos(pPhi) * Math.cos(pTheta);
+
+        const isSecondary = (r + c) % 3 === 0;
+        const color = isSecondary ? planet.secondaryColor : planet.primaryColor;
+
+        particles.push({
+          x: pCenterX + lx,
+          y: pCenterY + ly,
+          z: pCenterZ + lz,
+          tier: 1,
+          size: planet.visualRadius > 10 ? 1.6 : 1.3,
+          customColor: color,
+          customGlow: color,
+        });
+      }
+    }
+
+    // Saturn 3D Concentric Rings (240 ring particles in tilted disc)
+    if (planet.hasRings) {
+      const RING_COUNT = 240;
+      const ringTilt = 0.45; // ~26 degree ring tilt
+      const rInner = planet.visualRadius * 1.4;
+      const rOuter = planet.visualRadius * 2.5;
+
+      for (let k = 0; k < RING_COUNT; k++) {
+        const ringAngle = (k / RING_COUNT) * Math.PI * 2 + time * 0.2;
+        const radFrac = (k % 4) / 3;
+        // Skip Cassini division gap
+        if (radFrac > 0.48 && radFrac < 0.58) continue;
+
+        const rad = rInner + radFrac * (rOuter - rInner);
+        const rx = rad * Math.cos(ringAngle);
+        const rz = rad * Math.sin(ringAngle);
+
+        const rlx = rx;
+        const rly = rz * Math.sin(ringTilt);
+        const rlz = rz * Math.cos(ringTilt);
+
+        particles.push({
+          x: pCenterX + rlx,
+          y: pCenterY + rly,
+          z: pCenterZ + rlz,
+          tier: 2,
+          size: 1.1,
+          customColor: k % 2 === 0 ? '#E8D4A8' : '#D0BA8A',
+          customGlow: 'rgba(235, 212, 157, 0.45)',
+        });
+      }
+    }
+
+    // Earth Orbiting Moon (16 particles)
+    if (planet.hasMoon) {
+      const moonDist = planet.visualRadius * 2.2;
+      const moonAngle = time * 3.5;
+      const mx = pCenterX + moonDist * Math.cos(moonAngle);
+      const my = pCenterY + moonDist * Math.sin(moonAngle) * 0.3;
+      const mz = pCenterZ + moonDist * Math.sin(moonAngle);
+
+      for (let m = 0; m < 8; m++) {
+        const ma = (m / 8) * Math.PI * 2;
+        particles.push({
+          x: mx + Math.cos(ma) * 1.5,
+          y: my + Math.sin(ma) * 1.5,
+          z: mz,
+          tier: 1,
+          size: 1.0,
+          customColor: '#CCCCCC',
+          customGlow: 'rgba(200, 200, 200, 0.6)',
+        });
+      }
+    }
+
+    // Glowing Trajectory Track Dots (48 particles per planetary orbit)
+    const TRACK_POINTS = 48;
+    for (let t = 0; t < TRACK_POINTS; t++) {
+      const tAngle = (t / TRACK_POINTS) * Math.PI * 2;
+      const tx = planet.orbitRadius * Math.cos(tAngle);
+      const ty = planet.orbitRadius * Math.sin(tAngle) * Math.sin(inc) * 0.5;
+      const tz = planet.orbitRadius * Math.sin(tAngle) * Math.cos(inc);
+
+      particles.push({
+        x: tx,
+        y: ty,
+        z: tz,
+        tier: 3,
+        size: 0.9,
+        customColor: planet.primaryColor,
+        customGlow: `${planet.primaryColor}55`,
+        alpha: 0.35,
+      });
+    }
+  });
+
+  // 3. Shimmering Deep Space Background Starfield (120 particles)
+  for (let s = 0; s < 120; s++) {
+    const sSeed = s * 73.193;
+    const sDist = 380 + Math.sin(sSeed) * 60;
+    const sTheta = s * 0.523 + time * 0.02;
+    const sPhi = Math.sin(sSeed * 2.1) * (Math.PI * 0.45);
+
+    particles.push({
+      x: sDist * Math.cos(sPhi) * Math.sin(sTheta),
+      y: sDist * Math.sin(sPhi),
+      z: sDist * Math.cos(sPhi) * Math.cos(sTheta),
+      tier: 4,
+      size: 0.8 + Math.abs(Math.sin(sSeed + time)) * 0.5,
+      colorType: s % 3 === 0 ? 'white' : 'secondary',
+      alpha: 0.3 + Math.abs(Math.sin(sSeed * 3 + time * 2)) * 0.4,
+    });
+  }
+
+  return particles;
+}
+
 export const FloatingOrb: React.FC = () => {
   const {
     status,
@@ -731,7 +957,13 @@ export const FloatingOrb: React.FC = () => {
       const sinYaw = Math.sin(currentYaw);
       const cosPitch = Math.cos(currentPitch);
       const sinPitch = Math.sin(currentPitch);
+
+      // Dynamic responsive scale factor so the 3D core & HUD scale up to fill the stage
+      const minDimension = Math.min(width, height);
+      // Reference base dimension is 360px; scale dynamically so orb covers most of the viewport
+      const sceneScale = Math.max(0.95, Math.min(2.5, (minDimension * 0.88) / 360));
       const fov = 560;
+      const fovScaled = fov * sceneScale;
 
       // --- 1. Atmospheric Ambient Radial Glow (#99FFFF) ---
       if (ambientGlowEnabledRef.current) {
@@ -745,10 +977,10 @@ export const FloatingOrb: React.FC = () => {
         const ambientGlow = ctx.createRadialGradient(
           centerX,
           centerY,
-          8,
+          8 * sceneScale,
           centerX,
           centerY,
-          290 + smoothedSpeechEnergy * 55 + morphProgress * 35
+          (290 + smoothedSpeechEnergy * 55 + morphProgress * 35) * sceneScale
         );
 
         ambientGlow.addColorStop(0, `rgba(${rgbPrimary.r}, ${rgbPrimary.g}, ${rgbPrimary.b}, ${smoothedGlowAlpha})`);
@@ -757,7 +989,7 @@ export const FloatingOrb: React.FC = () => {
 
         ctx.fillStyle = ambientGlow;
         ctx.beginPath();
-        ctx.arc(centerX, centerY, 320, 0, Math.PI * 2);
+        ctx.arc(centerX, centerY, 340 * sceneScale, 0, Math.PI * 2);
         ctx.fill();
       }
 
@@ -773,33 +1005,35 @@ export const FloatingOrb: React.FC = () => {
 
         // A. Segmented Inner Gimbal Arc Ring (encircling the central core)
         ctx.strokeStyle = `rgba(${rgbPrimary.r}, ${rgbPrimary.g}, ${rgbPrimary.b}, ${hudAlpha * 0.8})`;
-        ctx.lineWidth = 1.8;
+        ctx.lineWidth = Math.max(1.5, 1.8 * Math.sqrt(sceneScale));
+        const rArc1 = 162 * sceneScale;
         for (let a = 0; a < 3; a++) {
           const startArc = jarvisSpin1 + (a * Math.PI * 2) / 3;
           ctx.beginPath();
-          ctx.arc(centerX, centerY, 162, startArc, startArc + Math.PI * 0.42);
+          ctx.arc(centerX, centerY, rArc1, startArc, startArc + Math.PI * 0.42);
           ctx.stroke();
         }
 
         // B. Mid Tactical Notch Ring
         ctx.strokeStyle = `rgba(${rgbSecondary.r}, ${rgbSecondary.g}, ${rgbSecondary.b}, ${hudAlpha * 0.65})`;
-        ctx.lineWidth = 1.4;
+        ctx.lineWidth = Math.max(1.2, 1.4 * Math.sqrt(sceneScale));
+        const rArc2 = 188 * sceneScale;
         for (let a = 0; a < 6; a++) {
           const startArc = jarvisSpin2 + (a * Math.PI * 2) / 6;
           ctx.beginPath();
-          ctx.arc(centerX, centerY, 188, startArc, startArc + Math.PI * 0.20);
+          ctx.arc(centerX, centerY, rArc2, startArc, startArc + Math.PI * 0.20);
           ctx.stroke();
         }
 
         // C. Outer Tachometer Tick Ring
-        const tickRadius = 216;
+        const tickRadius = 216 * sceneScale;
         ctx.strokeStyle = `rgba(${rgbPrimary.r}, ${rgbPrimary.g}, ${rgbPrimary.b}, ${hudAlpha * 0.55})`;
-        ctx.lineWidth = 1.0;
+        ctx.lineWidth = Math.max(1.0, 1.0 * Math.sqrt(sceneScale));
         for (let i = 0; i < 36; i++) {
           const angle = jarvisSpin3 + (i * Math.PI * 2) / 36;
           const isMajor = i % 6 === 0;
-          const rInner = tickRadius - (isMajor ? 9 : 4.5);
-          const rOuter = tickRadius + (isMajor ? 7 : 2.5);
+          const rInner = tickRadius - (isMajor ? 9 : 4.5) * Math.sqrt(sceneScale);
+          const rOuter = tickRadius + (isMajor ? 7 : 2.5) * Math.sqrt(sceneScale);
           ctx.beginPath();
           ctx.moveTo(centerX + Math.cos(angle) * rInner, centerY + Math.sin(angle) * rInner);
           ctx.lineTo(centerX + Math.cos(angle) * rOuter, centerY + Math.sin(angle) * rOuter);
@@ -839,6 +1073,9 @@ export const FloatingOrb: React.FC = () => {
           tesseractData = { projected3DVertices: res.projected3DVertices, edges: res.edges };
           break;
         }
+        case 'planetarium':
+          rawParticles = generatePlanetariumPoints(time, curStatus, smoothedAudioLevel, bassEnergy);
+          break;
         case 'sphere':
         default:
           rawParticles = generateSpherePoints(time, curStatus, smoothedAudioLevel, morphProgress);
@@ -847,11 +1084,14 @@ export const FloatingOrb: React.FC = () => {
 
       // Helper to project any 3D coordinate through camera
       const project3D = (x0: number, y0: number, z0: number) => {
-        const x1 = x0 * cosYaw - z0 * sinYaw;
-        const z1 = x0 * sinYaw + z0 * cosYaw;
-        const y2 = y0 * cosPitch - z1 * sinPitch;
-        const z2 = y0 * sinPitch + z1 * cosPitch;
-        const scale = fov / (fov + z2);
+        const px = x0 * sceneScale;
+        const py = y0 * sceneScale;
+        const pz = z0 * sceneScale;
+        const x1 = px * cosYaw - pz * sinYaw;
+        const z1 = px * sinYaw + pz * cosYaw;
+        const y2 = py * cosPitch - z1 * sinPitch;
+        const z2 = py * sinPitch + z1 * cosPitch;
+        const scale = fovScaled / (fovScaled + z2);
         return {
           sx: centerX + x1 * scale,
           sy: centerY + y2 * scale,
@@ -865,7 +1105,7 @@ export const FloatingOrb: React.FC = () => {
       // A. Icosahedron Glowing Facet Edge Wireframes
       if (icoData) {
         ctx.save();
-        ctx.lineWidth = Math.max(0.8, 1.2 * (1.0 + smoothedAudioLevel * 0.5));
+        ctx.lineWidth = Math.max(0.8, 1.2 * Math.sqrt(sceneScale) * (1.0 + smoothedAudioLevel * 0.5));
         const edgeAlpha = Math.min(0.7, 0.25 + (isSpeaking ? 0.35 : isListening ? 0.2 : 0.1) + smoothedAudioLevel * 0.25);
         ctx.strokeStyle = `rgba(${rgbPrimary.r}, ${rgbPrimary.g}, ${rgbPrimary.b}, ${edgeAlpha})`;
 
@@ -886,7 +1126,7 @@ export const FloatingOrb: React.FC = () => {
       // B. Tesseract 4D Hypercube Edge Wireframes
       if (tesseractData) {
         ctx.save();
-        ctx.lineWidth = Math.max(0.8, 1.1 * (1.0 + smoothedAudioLevel * 0.6));
+        ctx.lineWidth = Math.max(0.8, 1.1 * Math.sqrt(sceneScale) * (1.0 + smoothedAudioLevel * 0.6));
         const edgeAlpha = Math.min(0.65, 0.22 + (isSpeaking ? 0.32 : isListening ? 0.18 : 0.08) + smoothedAudioLevel * 0.2);
         ctx.strokeStyle = `rgba(${rgbPrimary.r}, ${rgbPrimary.g}, ${rgbPrimary.b}, ${edgeAlpha})`;
 
@@ -908,7 +1148,7 @@ export const FloatingOrb: React.FC = () => {
       if (helixRungs) {
         ctx.save();
         const rungAlpha = Math.min(0.6, 0.18 + smoothedAudioLevel * 0.35);
-        ctx.lineWidth = 1.0;
+        ctx.lineWidth = Math.max(0.8, 1.0 * Math.sqrt(sceneScale));
         ctx.strokeStyle = `rgba(${rgbSecondary.r}, ${rgbSecondary.g}, ${rgbSecondary.b}, ${rungAlpha})`;
 
         helixRungs.forEach(({ pA, pB }) => {
@@ -929,15 +1169,19 @@ export const FloatingOrb: React.FC = () => {
       for (let i = 0; i < rawParticles.length; i++) {
         const p = rawParticles[i];
 
-        // 3D Euler Transformation
-        const x1 = p.x * cosYaw - p.z * sinYaw;
-        const z1 = p.x * sinYaw + p.z * cosYaw;
+        const px = p.x * sceneScale;
+        const py = p.y * sceneScale;
+        const pz = p.z * sceneScale;
 
-        const y2 = p.y * cosPitch - z1 * sinPitch;
-        const z2 = y0Pitch(p.y, z1, cosPitch, sinPitch);
+        // 3D Euler Transformation
+        const x1 = px * cosYaw - pz * sinYaw;
+        const z1 = px * sinYaw + pz * cosYaw;
+
+        const y2 = py * cosPitch - z1 * sinPitch;
+        const z2 = y0Pitch(py, z1, cosPitch, sinPitch);
 
         // Perspective Projection
-        const scale = fov / (fov + z2);
+        const scale = fovScaled / (fovScaled + z2);
         const screenX = centerX + x1 * scale;
         const screenY = centerY + y2 * scale;
 
@@ -968,7 +1212,7 @@ export const FloatingOrb: React.FC = () => {
         let rColor = rgbPrimary.r;
         let gColor = rgbPrimary.g;
         let bColor = rgbPrimary.b;
-        let pSize = (p.size ?? 1.4) * scale;
+        let pSize = (p.size ?? 1.4) * scale * Math.max(1.0, Math.min(1.8, Math.sqrt(sceneScale)));
         let alpha = 0.55 + scale * 0.35;
 
         if (isPulseActive) {
@@ -985,7 +1229,7 @@ export const FloatingOrb: React.FC = () => {
             gColor = rgbPrimary.g;
             bColor = rgbPrimary.b;
           }
-          pSize = (1.9 + pulseIntensity * 1.4) * scale;
+          pSize = (1.9 + pulseIntensity * 1.4) * scale * Math.max(1.0, Math.sqrt(sceneScale));
           alpha = 1.0;
         } else if (p.colorType === 'white') {
           rColor = 255;
@@ -1004,7 +1248,7 @@ export const FloatingOrb: React.FC = () => {
           rColor = Math.min(255, Math.floor(rgbPrimary.r + (255 - rgbPrimary.r) * crest));
           gColor = Math.min(255, Math.floor(rgbPrimary.g + (255 - rgbPrimary.g) * crest));
           bColor = 255;
-          pSize = (p.size ?? 1.4) * (1.2 + crest * 0.6) * scale;
+          pSize = (p.size ?? 1.4) * (1.2 + crest * 0.6) * scale * Math.max(1.0, Math.sqrt(sceneScale));
           alpha = Math.min(1.0, 0.75 + crest * 0.25);
         } else if (tier === 0 && currentShape === 'sphere') {
           // Sphere elevation gradient
@@ -1015,13 +1259,14 @@ export const FloatingOrb: React.FC = () => {
             bColor = Math.min(255, Math.floor(rgbPrimary.b * 1.05));
           } else {
             rColor = Math.floor(rgbSecondary.r * 0.85 + rgbPrimary.r * 0.15);
-            gColor = Math.floor(rgbSecondary.g * 0.85 + rgbPrimary.g * 0.15);
+            gColor = Math.floor(rgbSecondary.g * 0.85 + rgbPrimary.r * 0.15);
             bColor = Math.floor(rgbSecondary.b * 0.85 + rgbPrimary.b * 0.15);
           }
         }
 
-        const colorStr = `rgb(${rColor}, ${gColor}, ${bColor})`;
-        const glowStr = `rgba(${rColor}, ${gColor}, ${bColor}, ${alpha * 0.6})`;
+        let colorStr = p.customColor || `rgb(${rColor}, ${gColor}, ${bColor})`;
+        let glowStr = p.customGlow || `rgba(${rColor}, ${gColor}, ${bColor}, ${alpha * 0.6})`;
+        let finalAlpha = p.alpha !== undefined ? p.alpha : Math.min(1, Math.max(0.15, alpha));
 
         projectedPoints.push({
           x: screenX,
@@ -1031,7 +1276,7 @@ export const FloatingOrb: React.FC = () => {
           color: colorStr,
           glowColor: glowStr,
           size: Math.max(0.8, pSize),
-          alpha: Math.min(1, Math.max(0.15, alpha)),
+          alpha: finalAlpha,
           isLaserPulse: isPulseActive,
           tier,
         });
@@ -1114,12 +1359,12 @@ export const FloatingOrb: React.FC = () => {
   const spokenSubtitle = speakingTranscript.trim();
 
   return (
-    <div className="relative flex flex-col items-center justify-center select-none w-full max-w-3xl mx-auto py-1">
+    <div className="relative flex flex-col items-center justify-between select-none w-full h-full min-h-0 mx-auto py-1">
       {/* 3D Multi-Shape Procedural Intelligence Stage */}
       <div
         id="main-assistant-orb-stage"
         onClick={toggleListening}
-        className="relative w-[340px] h-[320px] sm:w-[440px] sm:h-[400px] md:w-[520px] md:h-[460px] lg:w-[580px] lg:h-[500px] flex items-center justify-center cursor-grab active:cursor-grabbing transition-transform hover:scale-[1.02] active:scale-[0.98]"
+        className="relative w-full h-full flex-1 min-h-0 flex items-center justify-center cursor-grab active:cursor-grabbing transition-transform"
         role="button"
         tabIndex={0}
         aria-label={`3D ${coreShape} Intelligence Core`}
@@ -1127,12 +1372,12 @@ export const FloatingOrb: React.FC = () => {
         {/* Canvas Engine */}
         <canvas
           ref={canvasRef}
-          className="absolute inset-0 w-full h-full pointer-events-auto z-10 rounded-2xl"
+          className="absolute inset-0 w-full h-full pointer-events-auto z-10"
         />
       </div>
 
       {/* Dynamic Live Subtitles Headline */}
-      <div className="z-10 flex flex-col items-center text-center px-4 mt-2 w-full min-h-[64px] justify-center">
+      <div className="z-20 flex flex-col items-center text-center px-4 mt-1 mb-2 w-full min-h-[52px] justify-center shrink-0">
         {isListening ? (
           <h1 className="text-lg md:text-xl lg:text-2xl font-medium tracking-tight text-white transition-all duration-200 max-w-xl leading-relaxed">
             {currentTranscript ? (
