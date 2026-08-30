@@ -2,8 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Keep both external runtimes pinned so voice builds are reproducible and an
-# upstream update cannot silently change FoxAI behavior.
+# Keep external runtimes pinned so upstream updates cannot silently change
+# realtime voice behavior.
 ARG HERMES_UPSTREAM_REF=v2026.8.27
 ARG AGENT_REACH_REF=v1.5.0
 
@@ -12,22 +12,20 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir uv \
     && git clone --depth 1 --branch "${HERMES_UPSTREAM_REF}" https://github.com/NousResearch/hermes-agent.git /opt/hermes-agent \
-    && uv pip install --system -e "/opt/hermes-agent[edge-tts]" \
-    && git clone --depth 1 --branch "${AGENT_REACH_REF}" https://github.com/Panniantong/Agent-Reach.git /opt/agent-reach \
-    && uv pip install --system -e /opt/agent-reach \
-    && npm install -g mcporter \
-    && mcporter config add exa https://mcp.exa.ai/mcp
-
-# Hermes' supported skill source of truth is ~/.hermes/skills. Install the
-# English Agent Reach skill plus its references directly from the pinned
-# upstream checkout; no FoxAI copy is maintained, so upgrades remain simple.
-RUN mkdir -p /root/.hermes/skills/research/agent-reach/references \
-    && cp /opt/agent-reach/agent_reach/skill/SKILL_en.md /root/.hermes/skills/research/agent-reach/SKILL.md \
-    && cp -r /opt/agent-reach/agent_reach/skill/references/. /root/.hermes/skills/research/agent-reach/references/
+    && uv pip install --system -e "/opt/hermes-agent[edge-tts]"
 
 ENV HERMES_UPSTREAM_PATH=/opt/hermes-agent \
     HERMES_RUNTIME=auto \
-    AGENT_REACH_HOME=/root/.agent-reach
+    AGENT_REACH_HOME=/root/.agent-reach \
+    AGENT_REACH_ENABLED=true
+
+# Agent Reach is intentionally isolated from the voice/Hermes build logic.
+# Docker only invokes its installer; repository/backend/skill details live in
+# integrations/agent_reach.
+COPY integrations/agent_reach/install.sh /tmp/install-agent-reach.sh
+RUN chmod +x /tmp/install-agent-reach.sh \
+    && AGENT_REACH_REF="${AGENT_REACH_REF}" /tmp/install-agent-reach.sh \
+    && rm /tmp/install-agent-reach.sh
 
 # Install FoxAI voice dependencies in the same image. Upstream Hermes pins its
 # own core dependencies; FoxAI adds LiveKit, Groq, Edge and Piper integrations.
