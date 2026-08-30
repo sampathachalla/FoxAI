@@ -15,10 +15,11 @@ export const VoiceInputBar: React.FC = () => {
   const {
     status,
     accentTheme,
+    voicePrefs,
     toggleListening,
     sendMessage,
   } = useVoiceAssistant();
-  const livekitVoice = useLiveKitVoice();
+  const livekitVoice = useLiveKitVoice(voicePrefs);
 
   const [inputVal, setInputVal] = useState('');
 
