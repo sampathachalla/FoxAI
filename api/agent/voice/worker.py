@@ -4,12 +4,9 @@ Ears: LiveKit WebRTC -> Silero VAD -> Groq Whisper Large v3 Turbo
 Brain: official Hermes runtime (with safe FoxAI compatibility fallback)
 Mouth: user-selectable Edge / Piper / Deepgram TTS
 
-Latency strategy:
-- Hermes text deltas are consumed as they arrive from the upstream runtime.
-- Deltas are grouped into short natural phrases instead of waiting for the full
-  response.
-- Edge/Piper synthesize short chunks; Piper runs off the asyncio event loop.
-- LiveKit owns full-duplex transport and interruption/playout lifecycle.
+The worker uses LiveKit's custom ``llm_node`` and ``tts_node`` extension points.
+That keeps turn-taking, transcripts, interruption, and playout inside LiveKit
+while Hermes owns reasoning/tools/memory and FoxAI owns TTS provider routing.
 """
 
 from __future__ import annotations
@@ -17,7 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import AsyncIterator
+from typing import AsyncIterable, AsyncIterator
 
 from dotenv import load_dotenv
 from livekit import rtc
@@ -37,20 +34,37 @@ PHRASE_MIN_CHARS = int(os.getenv("VOICE_TTS_PHRASE_MIN_CHARS", "48"))
 PHRASE_MAX_CHARS = int(os.getenv("VOICE_TTS_PHRASE_MAX_CHARS", "180"))
 
 
-async def _phrase_stream(text_stream: AsyncIterator[str]) -> AsyncIterator[str]:
-    """Convert token/delta streaming into speakable phrases.
+def _message_text(message) -> str:
+    value = getattr(message, "text_content", None)
+    if callable(value):
+        value = value()
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content.strip()
+    return ""
 
-    We emit at sentence boundaries as soon as there is enough text, and fall
-    back to comma/clause/space boundaries when the buffer gets long. This is a
-    latency/quality compromise: much faster first audio without choppy
-    word-by-word TTS.
-    """
+
+def _latest_user_text(chat_ctx) -> str:
+    items = getattr(chat_ctx, "items", None) or getattr(chat_ctx, "messages", None) or []
+    for item in reversed(list(items)):
+        role = getattr(item, "role", None)
+        if role == "user" or str(role).lower().endswith("user"):
+            text = _message_text(item)
+            if text:
+                return text
+    return ""
+
+
+async def _phrase_stream(text_stream: AsyncIterable[str]) -> AsyncIterator[str]:
+    """Convert LLM token deltas into short, natural TTS phrases."""
     buffer = ""
 
     async for delta in text_stream:
         if not delta:
             continue
-        buffer += delta
+        buffer += str(delta)
 
         while buffer:
             sentence_match = re.search(r"[.!?](?:\s|$)", buffer)
@@ -80,30 +94,31 @@ async def _phrase_stream(text_stream: AsyncIterator[str]) -> AsyncIterator[str]:
 
 
 async def _fox_tts_audio(
-    text: str,
+    text_stream: AsyncIterable[str],
     provider: str,
     voice: str | None,
 ) -> AsyncIterator[rtc.AudioFrame]:
-    """Synthesize Edge/Piper in short chunks and decode to LiveKit PCM frames."""
-    async for audio_bytes, mime_type in stream_speech_chunks(
-        text,
-        engine=provider,
-        voice=voice or None,
-        max_chars=PHRASE_MAX_CHARS,
-    ):
-        decoder = AudioStreamDecoder(
-            sample_rate=48000,
-            num_channels=1,
-            format=mime_type,
-        )
-        decoder.push(audio_bytes)
-        decoder.end_input()
+    """Stream Edge/Piper phrase audio into LiveKit PCM frames."""
+    async for phrase in _phrase_stream(text_stream):
+        async for audio_bytes, mime_type in stream_speech_chunks(
+            phrase,
+            engine=provider,
+            voice=voice or None,
+            max_chars=PHRASE_MAX_CHARS,
+        ):
+            decoder = AudioStreamDecoder(
+                sample_rate=48000,
+                num_channels=1,
+                format=mime_type,
+            )
+            decoder.push(audio_bytes)
+            decoder.end_input()
 
-        try:
-            async for frame in decoder:
-                yield frame
-        finally:
-            await decoder.aclose()
+            try:
+                async for frame in decoder:
+                    yield frame
+            finally:
+                await decoder.aclose()
 
 
 class FoxHermesVoiceAgent(Agent):
@@ -126,7 +141,9 @@ class FoxHermesVoiceAgent(Agent):
         requested = (provider or "").strip().lower()
         if requested in SUPPORTED_TTS_PROVIDERS:
             if requested == "deepgram" and not self.deepgram_available:
-                logger.warning("Deepgram selected but DEEPGRAM_API_KEY is missing; falling back to Edge TTS")
+                logger.warning(
+                    "Deepgram selected but DEEPGRAM_API_KEY is missing; falling back to Edge TTS"
+                )
                 self.tts_provider = "edge"
             else:
                 self.tts_provider = requested
@@ -138,44 +155,24 @@ class FoxHermesVoiceAgent(Agent):
             self.tts_voice or "default",
         )
 
-    def _speak_phrase(self, phrase: str) -> None:
-        """Queue one interruptible phrase using the currently selected provider."""
-        if self.tts_provider == "deepgram":
-            self.session.say(
-                phrase,
-                allow_interruptions=True,
-                add_to_chat_ctx=False,
-            )
-            return
+    async def llm_node(self, chat_ctx, tools, model_settings):
+        """Use Hermes as LiveKit's streaming LLM node.
 
-        self.session.say(
-            phrase,
-            audio=_fox_tts_audio(phrase, self.tts_provider, self.tts_voice or None),
-            allow_interruptions=True,
-            add_to_chat_ctx=False,
-        )
-
-    async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
-        """Stream Hermes output into TTS instead of waiting for the full answer."""
-        transcript = getattr(new_message, "text_content", None)
-        if callable(transcript):
-            transcript = transcript()
-        if not transcript:
-            transcript = str(getattr(new_message, "content", "")).strip()
+        Hermes owns its own tool loop and memory. LiveKit receives plain text
+        deltas, so its normal transcript/turn/interruption pipeline stays intact.
+        """
+        transcript = _latest_user_text(chat_ctx)
         if not transcript:
             return
+        return self.hermes.stream_response(transcript)
 
-        full_response: list[str] = []
-        async for phrase in _phrase_stream(self.hermes.stream_response(transcript)):
-            full_response.append(phrase)
-            self._speak_phrase(phrase)
+    async def tts_node(self, text: AsyncIterable[str], model_settings):
+        """Route the current frontend-selected TTS provider without reconnecting."""
+        if self.tts_provider == "deepgram" and self.deepgram_available:
+            return Agent.default.tts_node(self, text, model_settings)
 
-        # Hermes itself owns durable conversation history. We only append one
-        # final assistant message to LiveKit context for diagnostics/captions,
-        # rather than one message per streamed phrase.
-        response_text = " ".join(full_response).strip()
-        if response_text:
-            turn_ctx.add_message(role="assistant", content=response_text)
+        provider = self.tts_provider if self.tts_provider in {"edge", "piper"} else "edge"
+        return _fox_tts_audio(text, provider, self.tts_voice or None)
 
 
 def build_session() -> tuple[AgentSession, bool]:
