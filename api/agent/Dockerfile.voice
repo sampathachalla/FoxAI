@@ -1,0 +1,27 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Official Hermes supports library embedding from its source checkout. Pin the
+# release for reproducible builds and make the ref a build argument so upgrades
+# are deliberate and do not require changing FoxAI code.
+ARG HERMES_UPSTREAM_REF=v2026.8.27
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir uv \
+    && git clone --depth 1 --branch "${HERMES_UPSTREAM_REF}" https://github.com/NousResearch/hermes-agent.git /opt/hermes-agent \
+    && uv pip install --system -e "/opt/hermes-agent[edge-tts]"
+
+ENV HERMES_UPSTREAM_PATH=/opt/hermes-agent \
+    HERMES_RUNTIME=auto
+
+# Install FoxAI voice dependencies in the same image. Upstream Hermes pins its
+# own core dependencies; FoxAI adds LiveKit, Groq, Edge and Piper integrations.
+COPY requirements.txt .
+RUN uv pip install --system -r requirements.txt
+
+COPY . .
+RUN mkdir -p Tts/piper_models
+
+CMD ["python", "-m", "voice.worker", "dev"]
