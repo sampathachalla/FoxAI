@@ -12,9 +12,9 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
-from integrations.agent_reach import system_prompt_hint
+from integrations.agent_reach import is_agent_reach_tool_event, system_prompt_hint
 from workflows.voice_workflow import VoiceWorkflow
 
 logger = logging.getLogger("fox.voice.hermes")
@@ -25,6 +25,8 @@ VOICE_SYSTEM_PROMPT = (
     "actually needed. For simple conversation, answer directly without tools."
     + system_prompt_hint()
 )
+
+HermesStateCallback = Callable[[str, Dict[str, Any]], None]
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -56,15 +58,18 @@ class HermesVoiceAdapter:
         workflow: Optional[VoiceWorkflow] = None,
         *,
         session_id: Optional[str] = None,
+        state_callback: Optional[HermesStateCallback] = None,
     ):
         self.workflow = workflow or VoiceWorkflow()
         self.runtime_mode = os.getenv("HERMES_RUNTIME", "auto").strip().lower()
         self.session_id = session_id or "fox-voice"
         self.task_id = f"fox-voice:{self.session_id}"
+        self.state_callback = state_callback
         self._upstream_agent: Any = None
         self._upstream_history: Optional[List[Dict[str, Any]]] = None
         self._lock = asyncio.Lock()
         self._active_task: Optional[asyncio.Task] = None
+        self._agent_reach_active = False
         self._init_upstream()
 
     @property
@@ -74,6 +79,26 @@ class HermesVoiceAdapter:
     @property
     def runtime_name(self) -> str:
         return "upstream" if self.using_upstream else "fox-local"
+
+    def _emit_state(self, state: str, **metadata: Any) -> None:
+        callback = self.state_callback
+        if callback is None:
+            return
+        payload = {"session_id": self.session_id, **metadata}
+        try:
+            callback(state, payload)
+        except Exception:
+            logger.exception("Hermes state callback failed")
+
+    def _on_tool_start(self, *args: Any, **kwargs: Any) -> None:
+        if is_agent_reach_tool_event(*args, **kwargs):
+            self._agent_reach_active = True
+            self._emit_state("searching", source="agent_reach")
+
+    def _on_tool_complete(self, *args: Any, **kwargs: Any) -> None:
+        if self._agent_reach_active:
+            self._agent_reach_active = False
+            self._emit_state("thinking", source="agent_reach")
 
     def _init_upstream(self) -> None:
         if self.runtime_mode == "local":
@@ -104,6 +129,10 @@ class HermesVoiceAdapter:
                 "skip_context_files": _env_bool("HERMES_SKIP_CONTEXT_FILES", True),
                 "skip_memory": _env_bool("HERMES_SKIP_MEMORY", False),
                 "platform": "fox-livekit",
+                # These are upstream Hermes callbacks. They do not change tool
+                # execution; they only expose state to the transport/UI layer.
+                "tool_start_callback": self._on_tool_start,
+                "tool_complete_callback": self._on_tool_complete,
             }
             enabled_toolsets = _csv_env("HERMES_ENABLED_TOOLSETS")
             disabled_toolsets = _csv_env("HERMES_DISABLED_TOOLSETS")
@@ -167,6 +196,8 @@ class HermesVoiceAdapter:
         if agent is None:
             return
 
+        self._agent_reach_active = False
+        self._emit_state("listening", reason="interrupted")
         try:
             hard_interrupt = getattr(agent, "hard_interrupt", None)
             if callable(hard_interrupt):
@@ -192,6 +223,7 @@ class HermesVoiceAdapter:
             return await self._respond_local(transcript, history)
 
         async with self._lock:
+            self._emit_state("thinking")
             try:
                 result = await asyncio.to_thread(self._run_upstream_sync, transcript, history)
                 return str(result.get("final_response") or "").strip()
@@ -213,12 +245,15 @@ class HermesVoiceAdapter:
         released, preventing an old tool/LLM turn from racing the new voice turn.
         """
         if not self._upstream_agent:
+            self._emit_state("thinking")
             text = await self._respond_local(transcript, history)
             if text:
+                self._emit_state("speaking")
                 yield text
             return
 
         async with self._lock:
+            self._emit_state("thinking")
             loop = asyncio.get_running_loop()
             queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
             emitted: List[str] = []
@@ -239,10 +274,14 @@ class HermesVoiceAdapter:
             self._active_task = task
 
             try:
+                first_delta = True
                 while True:
                     item = await queue.get()
                     if item is None:
                         break
+                    if first_delta:
+                        first_delta = False
+                        self._emit_state("speaking")
                     emitted.append(item)
                     yield item
 
@@ -253,17 +292,16 @@ class HermesVoiceAdapter:
                     if not emitted:
                         fallback = await self._respond_local(transcript, history)
                         if fallback:
+                            self._emit_state("speaking")
                             yield fallback
                     return
 
                 final_text = str(result.get("final_response") or "").strip()
                 if not emitted and final_text:
+                    self._emit_state("speaking")
                     yield final_text
             except asyncio.CancelledError:
                 self.interrupt_current(reason="LiveKit interrupted voice generation")
-                # AIAgent's interruptible API loop observes hard cancellation
-                # quickly. Wait for it to leave the stateful agent before a new
-                # turn acquires this lock.
                 if not task.done():
                     try:
                         await asyncio.shield(task)
@@ -272,4 +310,5 @@ class HermesVoiceAdapter:
                 raise
             finally:
                 self._active_task = None
+                self._agent_reach_active = False
                 self._upstream_agent.stream_delta_callback = previous_callback
