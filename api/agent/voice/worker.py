@@ -11,6 +11,7 @@ while Hermes owns reasoning/tools/memory and FoxAI owns TTS provider routing.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -22,7 +23,7 @@ from livekit.agents import Agent, AgentServer, AgentSession, JobContext, cli
 from livekit.agents.utils.codecs import AudioStreamDecoder
 from livekit.plugins import deepgram, groq, silero
 
-from Tts.service import stream_speech_chunks
+from Tts.service import stream_encoded_speech
 from voice.hermes_adapter import HermesVoiceAdapter
 
 load_dotenv()
@@ -93,32 +94,65 @@ async def _phrase_stream(text_stream: AsyncIterable[str]) -> AsyncIterator[str]:
         yield tail
 
 
+async def _decode_encoded_phrase(
+    phrase: str,
+    provider: str,
+    voice: str | None,
+) -> AsyncIterator[rtc.AudioFrame]:
+    """Decode a provider audio stream while bytes are still arriving.
+
+    Edge feeds MP3 chunks directly into LiveKit's low-latency decoder. Piper
+    currently yields one WAV per short phrase, with its blocking subprocess
+    already moved to a worker thread by the TTS service.
+    """
+    mime_type = "audio/mpeg" if provider == "edge" else "audio/wav"
+    decoder = AudioStreamDecoder(
+        sample_rate=48000,
+        num_channels=1,
+        format=mime_type,
+    )
+
+    async def produce() -> None:
+        try:
+            async for audio_bytes, _ in stream_encoded_speech(
+                phrase,
+                engine=provider,
+                voice=voice or None,
+            ):
+                decoder.push(audio_bytes)
+            decoder.end_input()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Signal EOF so the consumer does not hang, then propagate via the
+            # producer task after decoder output drains.
+            decoder.end_input()
+            raise
+
+    producer = asyncio.create_task(produce())
+    try:
+        async for frame in decoder:
+            yield frame
+        await producer
+    finally:
+        if not producer.done():
+            producer.cancel()
+            try:
+                await producer
+            except asyncio.CancelledError:
+                pass
+        await decoder.aclose()
+
+
 async def _fox_tts_audio(
     text_stream: AsyncIterable[str],
     provider: str,
     voice: str | None,
 ) -> AsyncIterator[rtc.AudioFrame]:
-    """Stream Edge/Piper phrase audio into LiveKit PCM frames."""
+    """Stream short Edge/Piper phrases to LiveKit as soon as they are ready."""
     async for phrase in _phrase_stream(text_stream):
-        async for audio_bytes, mime_type in stream_speech_chunks(
-            phrase,
-            engine=provider,
-            voice=voice or None,
-            max_chars=PHRASE_MAX_CHARS,
-        ):
-            decoder = AudioStreamDecoder(
-                sample_rate=48000,
-                num_channels=1,
-                format=mime_type,
-            )
-            decoder.push(audio_bytes)
-            decoder.end_input()
-
-            try:
-                async for frame in decoder:
-                    yield frame
-            finally:
-                await decoder.aclose()
+        async for frame in _decode_encoded_phrase(phrase, provider, voice):
+            yield frame
 
 
 class FoxHermesVoiceAgent(Agent):
@@ -227,8 +261,6 @@ async def entrypoint(ctx: JobContext) -> None:
     await session.start(room=ctx.room, agent=agent)
     await ctx.connect()
 
-    # Apply attributes for participants that were already present when the
-    # worker connected to the room.
     for participant in ctx.room.remote_participants.values():
         apply_participant_preferences(participant)
 
