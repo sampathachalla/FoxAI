@@ -7,8 +7,10 @@ python-dotenv>=1.0.0
 edge-tts>=6.1.9
 piper-tts>=1.2.0
 
-# Realtime voice architecture
-livekit-agents>=1.2.0
-livekit-plugins-silero>=1.2.0
-livekit-plugins-groq>=1.2.0
-livekit-plugins-deepgram>=1.2.0
+# Realtime voice architecture. Pin to the 1.5 API family because FoxAI uses
+# Agent custom llm_node/tts_node, AgentSession.say(audio=...), and current
+# participant/session behavior from this SDK generation.
+livekit-agents~=1.5
+livekit-plugins-silero~=1.5
+livekit-plugins-groq~=1.5
+livekit-plugins-deepgram~=1.5
