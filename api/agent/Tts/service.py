@@ -12,11 +12,7 @@ class UnsupportedTTSEngine(ValueError):
 
 
 def split_text_for_tts(text: str, max_chars: int = 180) -> List[str]:
-    """Split speech into short natural chunks to reduce time-to-first-audio.
-
-    Prefer sentence boundaries, then clause/whitespace boundaries for long
-    sentences. This keeps Edge/Piper requests small without cutting words.
-    """
+    """Split speech into short natural chunks to reduce time-to-first-audio."""
     normalized = re.sub(r"\s+", " ", (text or "").strip())
     if not normalized:
         return []
@@ -55,10 +51,39 @@ async def synthesize_speech(text: str, engine: str = "edge", voice: Optional[str
         return audio, "audio/mpeg"
 
     if engine == "piper":
-        # Piper uses a blocking subprocess. Run it off the asyncio event loop so
-        # LiveKit/VAD/STT are not stalled while local speech is synthesized.
+        # Piper uses a blocking subprocess. Running it in a worker thread keeps
+        # LiveKit's event loop responsive for VAD, STT and interruption events.
         audio = await asyncio.to_thread(piper_engine.synthesize, text, voice)
         return audio, "audio/wav"
+
+    raise UnsupportedTTSEngine(f"Unknown TTS engine '{engine}'. Supported engines: {SUPPORTED_ENGINES}")
+
+
+async def stream_encoded_speech(
+    text: str,
+    engine: str = "edge",
+    voice: Optional[str] = None,
+) -> AsyncIterator[Tuple[bytes, str]]:
+    """Yield encoded audio progressively for one short phrase.
+
+    Edge emits the provider's MP3 chunks immediately. Piper currently produces
+    one WAV result per phrase, but synthesis is moved off the asyncio loop. This
+    keeps the public provider contract uniform while giving Edge true streaming
+    and Piper low-latency sentence/chunk playback.
+    """
+    engine = (engine or "edge").lower()
+    if engine == "edge":
+        async for audio_chunk in edge_engine.stream_synthesize(
+            text,
+            voice=voice or edge_engine.DEFAULT_EDGE_VOICE,
+        ):
+            yield audio_chunk, "audio/mpeg"
+        return
+
+    if engine == "piper":
+        audio = await asyncio.to_thread(piper_engine.synthesize, text, voice)
+        yield audio, "audio/wav"
+        return
 
     raise UnsupportedTTSEngine(f"Unknown TTS engine '{engine}'. Supported engines: {SUPPORTED_ENGINES}")
 
@@ -69,26 +94,14 @@ async def stream_speech_chunks(
     voice: Optional[str] = None,
     max_chars: int = 180,
 ) -> AsyncIterator[Tuple[bytes, str]]:
-    """Yield short synthesized audio chunks for faster perceived TTS startup.
-
-    Edge remains fully async. Piper synthesis is moved to a worker thread so
-    its subprocess cannot block the realtime LiveKit event loop. Existing
-    ``synthesize_speech`` callers are unchanged.
-    """
+    """Compatibility chunk stream used by callers that want complete chunks."""
     engine = (engine or "edge").lower()
     if engine not in SUPPORTED_ENGINES:
         raise UnsupportedTTSEngine(f"Unknown TTS engine '{engine}'. Supported engines: {SUPPORTED_ENGINES}")
 
     for chunk in split_text_for_tts(text, max_chars=max_chars):
-        if engine == "edge":
-            audio = await edge_engine.synthesize(
-                chunk,
-                voice=voice or edge_engine.DEFAULT_EDGE_VOICE,
-            )
-            yield audio, "audio/mpeg"
-        else:
-            audio = await asyncio.to_thread(piper_engine.synthesize, chunk, voice)
-            yield audio, "audio/wav"
+        audio, mime_type = await synthesize_speech(chunk, engine=engine, voice=voice)
+        yield audio, mime_type
 
 
 async def list_engine_voices(engine: str) -> List[Dict[str, str]]:
