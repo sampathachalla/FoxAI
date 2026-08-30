@@ -2,8 +2,7 @@
 
 The adapter prefers the upstream Hermes Agent AIAgent implementation when it is
 available, but keeps FoxAI's existing VoiceWorkflow as a compatibility fallback.
-This lets us upgrade Hermes independently without coupling LiveKit/STT/TTS code
-to Hermes internals.
+This lets Hermes evolve independently from LiveKit/STT/TTS code.
 """
 
 from __future__ import annotations
@@ -34,17 +33,11 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 class HermesVoiceAdapter:
-    """Use upstream Hermes when available, otherwise preserve the old runtime.
+    """Prefer official Hermes while retaining the previous FoxAI runtime safely.
 
-    Runtime selection:
-      - HERMES_RUNTIME=upstream -> require upstream Hermes, but still fall back
-        if initialization fails so voice does not become unusable.
-      - HERMES_RUNTIME=local -> always use FoxAI's existing VoiceWorkflow.
-      - HERMES_RUNTIME=auto (default) -> use upstream when installed/available.
-
-    The upstream instance is scoped to this voice session. Hermes documents that
-    AIAgent is stateful and should not be shared concurrently, so calls are
-    serialized with an asyncio lock.
+    ``HERMES_RUNTIME`` can be ``auto`` (default), ``upstream``, or ``local``.
+    The upstream AIAgent is scoped to one voice session and calls are serialized
+    because Hermes documents AIAgent as stateful/non-thread-safe.
     """
 
     def __init__(self, workflow: Optional[VoiceWorkflow] = None):
@@ -70,9 +63,8 @@ class HermesVoiceAdapter:
 
         upstream_path = Path(os.getenv("HERMES_UPSTREAM_PATH", "/opt/hermes-agent"))
         if upstream_path.exists() and str(upstream_path) not in sys.path:
-            # Insert after FoxAI's own api/agent directory so our local packages
-            # keep their normal import precedence while run_agent.py can still
-            # be resolved from the official Hermes checkout.
+            # Keep FoxAI's own api/agent modules first while making official
+            # Hermes' top-level run_agent.py importable.
             sys.path.append(str(upstream_path))
 
         try:
@@ -83,21 +75,19 @@ class HermesVoiceAdapter:
             api_key = os.getenv("HERMES_API_KEY") or os.getenv("GROQ_API_KEY")
             max_iterations = int(os.getenv("HERMES_MAX_ITERATIONS", "8"))
 
-            kwargs: Dict[str, Any] = {
-                "model": model,
-                "base_url": base_url,
-                "api_key": api_key,
-                "quiet_mode": True,
-                "ephemeral_system_prompt": VOICE_SYSTEM_PROMPT,
-                "max_iterations": max_iterations,
-                # Project AGENTS.md files are not needed for normal voice turns
-                # and add prompt-building overhead. Hermes memory remains enabled.
-                "skip_context_files": _env_bool("HERMES_SKIP_CONTEXT_FILES", True),
-                "skip_memory": _env_bool("HERMES_SKIP_MEMORY", False),
-                "platform": "fox-livekit",
-            }
-
-            self._upstream_agent = AIAgent(**kwargs)
+            self._upstream_agent = AIAgent(
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+                quiet_mode=True,
+                ephemeral_system_prompt=VOICE_SYSTEM_PROMPT,
+                max_iterations=max_iterations,
+                # Avoid unrelated project context overhead for realtime turns;
+                # official Hermes memory/skills remain available.
+                skip_context_files=_env_bool("HERMES_SKIP_CONTEXT_FILES", True),
+                skip_memory=_env_bool("HERMES_SKIP_MEMORY", False),
+                platform="fox-livekit",
+            )
             logger.info(
                 "Official Hermes runtime enabled: model=%s base_url=%s",
                 model,
@@ -111,6 +101,15 @@ class HermesVoiceAdapter:
                 "Official Hermes runtime unavailable; using FoxAI compatibility runtime: %s",
                 exc,
             )
+
+    async def _respond_local(
+        self,
+        transcript: str,
+        history: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        result = await self.workflow.execute(transcript, history)
+        text = result.get("text", "") if isinstance(result, dict) else str(result)
+        return text.strip()
 
     def _run_upstream_sync(
         self,
@@ -134,67 +133,79 @@ class HermesVoiceAdapter:
         transcript: str,
         history: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
-        """Return a complete response while preserving the old compatibility path."""
+        """Return a complete response with automatic compatibility fallback."""
         if not self._upstream_agent:
-            result = await self.workflow.execute(transcript, history)
-            text = result.get("text", "") if isinstance(result, dict) else str(result)
-            return text.strip()
+            return await self._respond_local(transcript, history)
 
         async with self._lock:
-            result = await asyncio.to_thread(self._run_upstream_sync, transcript, history)
-            return str(result.get("final_response") or "").strip()
+            try:
+                result = await asyncio.to_thread(self._run_upstream_sync, transcript, history)
+                return str(result.get("final_response") or "").strip()
+            except Exception:
+                logger.exception("Official Hermes turn failed; falling back to FoxAI runtime")
+                return await self._respond_local(transcript, history)
 
     async def stream_response(
         self,
         transcript: str,
         history: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncIterator[str]:
-        """Yield upstream Hermes text deltas as soon as they are generated.
+        """Yield official Hermes response deltas for low-latency TTS.
 
-        Official Hermes exposes ``stream_delta_callback``. Registering a stream
-        consumer causes its agent loop to use the streaming API path. The model
-        call still runs in a worker thread because AIAgent is synchronous, while
-        deltas are bridged safely back to the asyncio/LiveKit event loop.
-
-        The local compatibility runtime has no equivalent token callback, so it
-        yields one complete response and remains behavior-compatible.
+        Upstream Hermes exposes ``stream_delta_callback`` and switches to its
+        streaming API path when a consumer is registered. A sentinel is queued
+        from the worker thread after the call completes so no final deltas are
+        lost to an event-loop race.
         """
         if not self._upstream_agent:
-            text = await self.respond(transcript, history)
+            text = await self._respond_local(transcript, history)
             if text:
                 yield text
             return
 
         async with self._lock:
             loop = asyncio.get_running_loop()
-            queue: asyncio.Queue[str] = asyncio.Queue()
+            queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
             emitted: List[str] = []
             previous_callback = getattr(self._upstream_agent, "stream_delta_callback", None)
 
             def on_delta(delta: str) -> None:
-                if not delta:
-                    return
-                loop.call_soon_threadsafe(queue.put_nowait, str(delta))
+                if delta:
+                    loop.call_soon_threadsafe(queue.put_nowait, str(delta))
+
+            def run_and_signal() -> Dict[str, Any]:
+                try:
+                    return self._run_upstream_sync(transcript, history)
+                finally:
+                    loop.call_soon_threadsafe(queue.put_nowait, None)
 
             self._upstream_agent.stream_delta_callback = on_delta
-            task = asyncio.create_task(
-                asyncio.to_thread(self._run_upstream_sync, transcript, history)
-            )
+            task = asyncio.create_task(asyncio.to_thread(run_and_signal))
 
             try:
-                while not task.done() or not queue.empty():
-                    try:
-                        delta = await asyncio.wait_for(queue.get(), timeout=0.05)
-                    except asyncio.TimeoutError:
-                        continue
-                    emitted.append(delta)
-                    yield delta
+                while True:
+                    item = await queue.get()
+                    if item is None:
+                        break
+                    emitted.append(item)
+                    yield item
 
-                result = await task
+                try:
+                    result = await task
+                except Exception:
+                    logger.exception("Official Hermes streaming turn failed")
+                    # Falling back after partial speech would repeat content. Only
+                    # use the compatibility runtime when nothing was spoken yet.
+                    if not emitted:
+                        fallback = await self._respond_local(transcript, history)
+                        if fallback:
+                            yield fallback
+                    return
+
                 final_text = str(result.get("final_response") or "").strip()
                 if not emitted and final_text:
-                    # Provider/runtime did not expose incremental deltas; still
-                    # return the response rather than failing the voice turn.
+                    # Some OpenAI-compatible providers may return a complete
+                    # answer even with a stream consumer attached.
                     yield final_text
             finally:
                 self._upstream_agent.stream_delta_callback = previous_callback
