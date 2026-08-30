@@ -1,6 +1,6 @@
 import io
 import re
-from typing import Dict, List
+from typing import AsyncIterator, Dict, List
 
 import edge_tts
 
@@ -35,15 +35,37 @@ def _country_label(locale: str) -> str:
     return _COUNTRY_LABELS.get(region, region)
 
 
-async def synthesize(text: str, voice: str = DEFAULT_EDGE_VOICE, rate: str = "+0%", pitch: str = "+0Hz") -> bytes:
+async def stream_synthesize(
+    text: str,
+    voice: str = DEFAULT_EDGE_VOICE,
+    rate: str = "+0%",
+    pitch: str = "+0Hz",
+) -> AsyncIterator[bytes]:
+    """Yield Edge TTS encoded audio chunks as soon as the service returns them."""
     if not text or not text.strip():
         raise ValueError("Text is required for Edge TTS synthesis.")
 
-    communicate = edge_tts.Communicate(text, voice=voice or DEFAULT_EDGE_VOICE, rate=rate, pitch=pitch)
-    buffer = io.BytesIO()
+    communicate = edge_tts.Communicate(
+        text,
+        voice=voice or DEFAULT_EDGE_VOICE,
+        rate=rate,
+        pitch=pitch,
+    )
+    emitted = False
     async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            buffer.write(chunk["data"])
+        if chunk["type"] == "audio" and chunk.get("data"):
+            emitted = True
+            yield chunk["data"]
+
+    if not emitted:
+        raise RuntimeError("Edge TTS returned no audio data.")
+
+
+async def synthesize(text: str, voice: str = DEFAULT_EDGE_VOICE, rate: str = "+0%", pitch: str = "+0Hz") -> bytes:
+    """Compatibility helper that collects the streaming Edge response."""
+    buffer = io.BytesIO()
+    async for audio_chunk in stream_synthesize(text, voice=voice, rate=rate, pitch=pitch):
+        buffer.write(audio_chunk)
 
     audio_bytes = buffer.getvalue()
     if not audio_bytes:
