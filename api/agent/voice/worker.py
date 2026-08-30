@@ -12,6 +12,7 @@ barge-in does not leave an old turn racing the new one.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -27,7 +28,7 @@ from livekit.agents.utils.codecs import AudioStreamDecoder
 from livekit.plugins import deepgram, groq, silero
 
 from Tts.service import stream_encoded_speech, stream_pcm_speech
-from voice.hermes_adapter import HermesVoiceAdapter
+from voice.hermes_adapter import HermesVoiceAdapter, HermesStateCallback
 
 load_dotenv()
 logger = logging.getLogger("fox.voice")
@@ -38,6 +39,7 @@ FIRST_PHRASE_MIN_CHARS = int(os.getenv("VOICE_TTS_FIRST_PHRASE_MIN_CHARS", "24")
 FIRST_PHRASE_MAX_CHARS = int(os.getenv("VOICE_TTS_FIRST_PHRASE_MAX_CHARS", "96"))
 PHRASE_MIN_CHARS = int(os.getenv("VOICE_TTS_PHRASE_MIN_CHARS", "44"))
 PHRASE_MAX_CHARS = int(os.getenv("VOICE_TTS_PHRASE_MAX_CHARS", "180"))
+AGENT_STATE_TOPIC = "fox.agent.state"
 
 
 @dataclass
@@ -65,14 +67,24 @@ class TurnLatency:
             value = self.marks.get(name)
             return round((value - base) * 1000, 1) if value is not None else None
 
+        def delta_ms(start: str, end: str) -> Optional[float]:
+            start_value = self.marks.get(start)
+            end_value = self.marks.get(end)
+            if start_value is None or end_value is None:
+                return None
+            return round((end_value - start_value) * 1000, 1)
+
         logger.info(
             "voice_latency turn=%s provider=%s speech_end_to_stt_ms=%s "
-            "speech_end_to_hermes_ms=%s speech_end_to_first_llm_ms=%s "
+            "speech_end_to_hermes_ms=%s speech_end_to_search_ms=%s "
+            "agent_reach_ms=%s speech_end_to_first_llm_ms=%s "
             "speech_end_to_first_phrase_ms=%s speech_end_to_first_audio_ms=%s",
             self.turn_no,
             provider,
             ms("stt_final"),
             ms("hermes_start"),
+            ms("agent_reach_start"),
+            delta_ms("agent_reach_start", "agent_reach_result"),
             ms("first_llm_delta"),
             ms("first_tts_phrase"),
             ms("first_audio"),
@@ -107,13 +119,10 @@ def _best_cut(buffer: str, min_chars: int, max_chars: int) -> int:
     if len(buffer) < min_chars:
         return 0
 
-    # Full sentence is preferred as soon as enough content exists.
     sentence = re.search(r"[.!?](?:\s|$)", buffer)
     if sentence and sentence.end() >= min_chars:
         return sentence.end()
 
-    # For the first spoken phrase, a clause boundary is worth using earlier to
-    # get sound to the user while Hermes keeps generating the remainder.
     search_end = min(len(buffer), max_chars)
     window = buffer[:search_end]
     clause_positions = [
@@ -266,14 +275,23 @@ async def _fox_tts_audio(
 
 
 class FoxHermesVoiceAgent(Agent):
-    def __init__(self, *, deepgram_available: bool, session_id: str) -> None:
+    def __init__(
+        self,
+        *,
+        deepgram_available: bool,
+        session_id: str,
+        state_callback: Optional[HermesStateCallback] = None,
+    ) -> None:
         super().__init__(
             instructions=(
                 "You are Fox, a fast conversational voice assistant. "
                 "Keep spoken answers natural and concise."
             )
         )
-        self.hermes = HermesVoiceAdapter(session_id=session_id)
+        self.hermes = HermesVoiceAdapter(
+            session_id=session_id,
+            state_callback=state_callback,
+        )
         self.deepgram_available = deepgram_available
         self.tts_provider = (
             DEFAULT_TTS_PROVIDER if DEFAULT_TTS_PROVIDER in SUPPORTED_TTS_PROVIDERS else "edge"
@@ -325,9 +343,6 @@ class FoxHermesVoiceAgent(Agent):
         voice = self.tts_voice or None
 
         if provider == "deepgram" and self.deepgram_available:
-            # Native plugin already implements streaming/cancellation. Provider
-            # changes made while this utterance is playing intentionally take
-            # effect on the next reply, avoiding mid-sentence voice changes.
             return Agent.default.tts_node(self, text, model_settings)
 
         provider = provider if provider in {"edge", "piper"} else "edge"
@@ -356,8 +371,6 @@ def build_session() -> tuple[AgentSession, bool]:
         turn_detection="vad",
         min_endpointing_delay=float(os.getenv("VOICE_MIN_ENDPOINT_MS", "350")) / 1000,
         max_endpointing_delay=float(os.getenv("VOICE_MAX_ENDPOINT_MS", "900")) / 1000,
-        # LiveKit enables preemptive generation by default; keep the explicit
-        # option here because it materially reduces speech-end -> LLM latency.
         turn_handling={"preemptive_generation": True},
     )
     return session, deepgram_available
@@ -372,9 +385,43 @@ async def entrypoint(ctx: JobContext) -> None:
     logger.info("Starting Fox realtime voice session for room %s", ctx.room.name)
 
     session, deepgram_available = build_session()
+    loop = asyncio.get_running_loop()
+
+    async def publish_agent_state(state: str, metadata: dict) -> None:
+        payload = json.dumps(
+            {
+                "type": "agent_state",
+                "state": state,
+                **metadata,
+            },
+            separators=(",", ":"),
+        )
+        try:
+            await ctx.room.local_participant.publish_data(
+                payload,
+                reliable=True,
+                topic=AGENT_STATE_TOPIC,
+            )
+        except Exception:
+            # State UI is supplemental; a data-channel issue must never break
+            # reasoning, search, TTS, or the voice session itself.
+            logger.debug("Failed to publish agent state=%s", state, exc_info=True)
+
+    def on_hermes_state(state: str, metadata: dict) -> None:
+        if state == "searching":
+            agent.latency.mark("agent_reach_start")
+        elif state == "thinking" and metadata.get("source") == "agent_reach":
+            agent.latency.mark("agent_reach_result")
+
+        def schedule() -> None:
+            asyncio.create_task(publish_agent_state(state, metadata))
+
+        loop.call_soon_threadsafe(schedule)
+
     agent = FoxHermesVoiceAgent(
         deepgram_available=deepgram_available,
         session_id=ctx.room.name,
+        state_callback=on_hermes_state,
     )
 
     def apply_participant_preferences(participant) -> None:
@@ -408,9 +455,6 @@ async def entrypoint(ctx: JobContext) -> None:
 
     @session.on("speech_created")
     def on_speech_created(ev) -> None:
-        # LiveKit owns interruption/false-interruption decisions. Observe the
-        # resulting SpeechHandle instead of cancelling Hermes on every VAD blip.
-        # The LLM async generator itself propagates cancellation into Hermes.
         handle = getattr(ev, "speech_handle", None)
         if handle is None:
             return
