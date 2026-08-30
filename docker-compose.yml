@@ -16,6 +16,26 @@ services:
       - ./api/agent/Tts/piper_models:/app/Tts/piper_models
     restart: unless-stopped
 
+  # Realtime LiveKit voice worker. It is behind the `voice` profile so normal
+  # docker-compose startup remains unchanged until realtime voice is enabled.
+  voice-worker:
+    profiles: ["voice"]
+    build:
+      context: ./api/agent
+      dockerfile: Dockerfile
+    container_name: fox-livekit-voice-worker
+    command: ["python", "-m", "voice.worker", "dev"]
+    env_file:
+      - path: ./api/.env
+        required: false
+    environment:
+      - HERMES_RUNTIME=auto
+      - HERMES_UPSTREAM_PATH=/opt/hermes-agent
+      - VOICE_TTS_PROVIDER=edge
+    volumes:
+      - ./api/agent/Tts/piper_models:/app/Tts/piper_models
+    restart: unless-stopped
+
   # Node.js / Express API server + OpenWakeWord service, one container (ports 3001 & 8011)
   api:
     build:
