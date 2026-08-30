@@ -124,6 +124,7 @@ class HermesVoiceAdapter:
                 "quiet_mode": True,
                 "ephemeral_system_prompt": VOICE_SYSTEM_PROMPT,
                 "max_iterations": max_iterations,
+                "session_id": self.session_id,
                 # Skip unrelated repository context for voice latency. Built-in
                 # Hermes memory remains enabled unless explicitly disabled.
                 "skip_context_files": _env_bool("HERMES_SKIP_CONTEXT_FILES", True),
@@ -230,6 +231,8 @@ class HermesVoiceAdapter:
             except Exception:
                 logger.exception("Official Hermes turn failed; falling back to FoxAI runtime")
                 return await self._respond_local(transcript, history)
+            finally:
+                self._emit_state("listening")
 
     async def stream_response(
         self,
@@ -246,10 +249,13 @@ class HermesVoiceAdapter:
         """
         if not self._upstream_agent:
             self._emit_state("thinking")
-            text = await self._respond_local(transcript, history)
-            if text:
-                self._emit_state("speaking")
-                yield text
+            try:
+                text = await self._respond_local(transcript, history)
+                if text:
+                    self._emit_state("speaking")
+                    yield text
+            finally:
+                self._emit_state("listening")
             return
 
         async with self._lock:
@@ -312,3 +318,4 @@ class HermesVoiceAdapter:
                 self._active_task = None
                 self._agent_reach_active = False
                 self._upstream_agent.stream_delta_callback = previous_callback
+                self._emit_state("listening")
