@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import assistantRoutes from './routes/assistant.routes';
+import livekitRoutes from './routes/livekit.routes';
 
 async function startServer() {
   const app = express();
@@ -39,8 +40,12 @@ async function startServer() {
     });
   });
 
-  // Assistant REST API endpoints
+  // Existing assistant REST endpoints remain unchanged.
   app.use('/api/assistant', assistantRoutes);
+
+  // LiveKit token minting is isolated so the existing voice path still works
+  // when realtime voice is disabled in the frontend.
+  app.use('/api/livekit', livekitRoutes);
 
   app.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`[Fox API Server] Running at http://localhost:${PORT}`);
