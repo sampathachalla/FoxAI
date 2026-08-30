@@ -51,8 +51,6 @@ async def synthesize_speech(text: str, engine: str = "edge", voice: Optional[str
         return audio, "audio/mpeg"
 
     if engine == "piper":
-        # Piper uses a blocking subprocess. Running it in a worker thread keeps
-        # LiveKit's event loop responsive for VAD, STT and interruption events.
         audio = await asyncio.to_thread(piper_engine.synthesize, text, voice)
         return audio, "audio/wav"
 
@@ -64,13 +62,7 @@ async def stream_encoded_speech(
     engine: str = "edge",
     voice: Optional[str] = None,
 ) -> AsyncIterator[Tuple[bytes, str]]:
-    """Yield encoded audio progressively for one short phrase.
-
-    Edge emits the provider's MP3 chunks immediately. Piper currently produces
-    one WAV result per phrase, but synthesis is moved off the asyncio loop. This
-    keeps the public provider contract uniform while giving Edge true streaming
-    and Piper low-latency sentence/chunk playback.
-    """
+    """Yield encoded audio progressively for providers that emit encoded media."""
     engine = (engine or "edge").lower()
     if engine == "edge":
         async for audio_chunk in edge_engine.stream_synthesize(
@@ -81,11 +73,27 @@ async def stream_encoded_speech(
         return
 
     if engine == "piper":
+        # Compatibility only. The realtime worker uses stream_pcm_speech() so
+        # Piper can stream raw PCM instead of waiting for a complete WAV.
         audio = await asyncio.to_thread(piper_engine.synthesize, text, voice)
         yield audio, "audio/wav"
         return
 
     raise UnsupportedTTSEngine(f"Unknown TTS engine '{engine}'. Supported engines: {SUPPORTED_ENGINES}")
+
+
+async def stream_pcm_speech(
+    text: str,
+    engine: str = "piper",
+    voice: Optional[str] = None,
+) -> AsyncIterator[Tuple[bytes, int, int]]:
+    """Yield signed-16-bit PCM chunks as ``(bytes, sample_rate, channels)``."""
+    engine = (engine or "piper").lower()
+    if engine != "piper":
+        raise UnsupportedTTSEngine("Raw PCM streaming is currently supported only for Piper")
+
+    async for audio_chunk, sample_rate in piper_engine.stream_synthesize_raw(text, voice):
+        yield audio_chunk, sample_rate, 1
 
 
 async def stream_speech_chunks(
