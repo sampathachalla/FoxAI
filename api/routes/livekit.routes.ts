@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, RoomAgentDispatch, RoomConfiguration } from 'livekit-server-sdk';
 
 const router = Router();
 
@@ -53,6 +53,12 @@ router.post('/token', async (req, res) => {
       // to update them without reconnecting when the user changes Settings.
       canUpdateOwnMetadata: true,
     });
+
+    // Dispatch the registered realtime worker when this browser joins the room.
+    // Without this, the client connects successfully but Hermes never receives a job.
+    const roomConfig = new RoomConfiguration();
+    roomConfig.agents = [new RoomAgentDispatch({ agentName: 'fox' })];
+    token.roomConfig = roomConfig;
 
     return res.json({
       token: await token.toJwt(),

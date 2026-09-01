@@ -840,6 +840,11 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             break;
           }
 
+          // Clear the previous sentence's last amplitude frame so the orb doesn't hold a
+          // stale level during the brief gap before this sentence's own onLevel starts.
+          setAudioLevel(0);
+          setFrequencyData(null);
+
           await playSentence(item.text, blob);
         }
       } finally {
@@ -1153,7 +1158,6 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const startListening = useCallback(async () => {
     cancelSpeaking();
     isSpeechFinalDispatchedRef.current = false;
-    setStatus('listening');
     setCurrentTranscript('');
 
     const micOk = await audioAnalyserRef.current.startMicrophone(
@@ -1166,6 +1170,11 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (!micOk) {
       speechSimulatorRef.current.start((simLevel) => setAudioLevel(simLevel));
     }
+
+    // Only claim "listening" once the mic (or its fallback) is actually active — setting
+    // this before startMicrophone() resolves would show "Listening..." while getUserMedia
+    // is still initializing, silently dropping anything said in that gap.
+    setStatus('listening');
 
     speechRecRef.current.start({
       onResult: (transcript, isFinal) => {

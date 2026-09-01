@@ -3,7 +3,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { FloatingOrb } from './FloatingOrb';
 import { ConversationFeed } from './ConversationFeed';
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
+import { useLiveKitVoice } from '../hooks/useLiveKitVoice';
 import { useScrollToBottom } from '../hooks/useScrollToBottom';
+import type { AssistantStatus } from '../types';
 import {
   PanelRightClose,
   PanelRightOpen,
@@ -12,9 +14,27 @@ import {
 } from 'lucide-react';
 
 export const AuraStage: React.FC = () => {
-  const { messages = [], createNewSession, clearChat } = useVoiceAssistant();
+  const { messages = [], createNewSession, clearChat, voicePrefs } = useVoiceAssistant();
   const [isChatOpen, setIsChatOpen] = useState(false);
   const scrollRef = useScrollToBottom(messages);
+
+  // Realtime voice: when VITE_LIVEKIT_VOICE_ENABLED is on, Voice mode drives the
+  // LiveKit "fox" agent (Groq STT -> Groq LLM -> Edge/Piper/Deepgram TTS) instead
+  // of the legacy browser-speech path. autoConnect keeps one shared session alive
+  // for as long as Voice mode is on screen (with a grace period across remounts).
+  const livekit = useLiveKitVoice(voicePrefs, { autoConnect: true });
+
+  const orbStatus: AssistantStatus | undefined = !livekit.enabled
+    ? undefined
+    : livekit.connecting
+    ? 'thinking'
+    : !livekit.connected
+    ? 'idle'
+    : livekit.agentState === 'searching'
+    ? 'thinking'
+    : livekit.agentState === 'idle'
+    ? 'listening'
+    : livekit.agentState;
 
   return (
     <div className="w-full h-full flex-1 min-h-0 glass-card border border-white/10 rounded-3xl p-2 md:p-3 shadow-2xl relative flex flex-col items-stretch overflow-hidden transition-all duration-300">
@@ -76,7 +96,22 @@ export const AuraStage: React.FC = () => {
       <div className="w-full h-full flex-1 min-h-0 relative flex items-center justify-center overflow-hidden">
         {/* 3D Visualizer Section - Full Stage Presence */}
         <div className="w-full h-full flex-1 min-h-0 flex items-center justify-center relative">
-          <FloatingOrb />
+          <FloatingOrb
+            statusOverride={orbStatus}
+            onOrbClick={livekit.enabled ? () => void livekit.toggle() : undefined}
+            transcriptOverride={livekit.enabled ? livekit.userTranscript : undefined}
+            spokenOverride={livekit.enabled ? livekit.agentTranscript : undefined}
+          />
+          {livekit.enabled && (livekit.connecting || livekit.error) && (
+            <div
+              className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 px-3 py-1.5 rounded-full text-xs backdrop-blur-xl shadow-lg border"
+              role="status"
+            >
+              {livekit.connecting
+                ? 'Connecting realtime voice…'
+                : `Realtime voice unavailable: ${livekit.error}`}
+            </div>
+          )}
         </div>
 
         {/* In-Scene Floating Transcript Overlay (Movie / Netflix Subtitle Style) */}

@@ -276,7 +276,12 @@ export class DeepgramAudioService {
       audio.onplay = async () => {
         if (this.sessionId !== currentSession) return;
 
-        // Connect real Web Audio API analyser to audio element for zero-lag reactivity
+        // Connect real Web Audio API analyser to audio element for zero-lag reactivity.
+        // A new <audio> element is created on every speak() call, but
+        // createMediaElementSource() binds permanently to whichever element it was
+        // created from — so the source/analyser must be rebuilt fresh each time too,
+        // not reused, or every call after the first stays wired to a stale, paused
+        // element and silently reports near-zero levels despite audio playing normally.
         const ctx = this.getAudioContext();
         let connectedAnalyser = false;
         if (ctx) {
@@ -284,15 +289,23 @@ export class DeepgramAudioService {
             if (ctx.state === 'suspended') {
               await ctx.resume().catch(() => {});
             }
-            if (!this.sourceNode) {
-              this.sourceNode = ctx.createMediaElementSource(audio);
-              this.analyser = ctx.createAnalyser();
-              this.analyser.fftSize = 256;
-              this.analyser.smoothingTimeConstant = 0.65;
-              this.sourceNode.connect(this.analyser);
-              this.analyser.connect(ctx.destination);
-              this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+            if (this.sourceNode) {
+              try {
+                this.sourceNode.disconnect();
+              } catch (e) {}
             }
+            if (this.analyser) {
+              try {
+                this.analyser.disconnect();
+              } catch (e) {}
+            }
+            this.sourceNode = ctx.createMediaElementSource(audio);
+            this.analyser = ctx.createAnalyser();
+            this.analyser.fftSize = 256;
+            this.analyser.smoothingTimeConstant = 0.65;
+            this.sourceNode.connect(this.analyser);
+            this.analyser.connect(ctx.destination);
+            this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
             connectedAnalyser = true;
           } catch (e) {
             // Fallback gracefully if already hooked or restricted

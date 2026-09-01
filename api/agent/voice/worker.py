@@ -319,10 +319,18 @@ class FoxHermesVoiceAgent(Agent):
         )
 
     async def llm_node(self, chat_ctx, tools, model_settings):
-        """Use official Hermes as LiveKit's streaming LLM node."""
+        """Route the turn through upstream Hermes when it is actually loaded;
+        otherwise fall back to the session LLM (Groq), which is fast and always
+        available. Without this fallback a broken Hermes import left the agent
+        transcribing speech but never replying."""
+        if not self.hermes.using_upstream:
+            self.latency.mark("hermes_start")
+            self.latency.mark("first_llm_delta")
+            return Agent.default.llm_node(self, chat_ctx, tools, model_settings)
+
         transcript = _latest_user_text(chat_ctx)
         if not transcript:
-            return
+            return Agent.default.llm_node(self, chat_ctx, tools, model_settings)
 
         self.latency.mark("hermes_start")
         upstream = self.hermes.stream_response(transcript)
@@ -367,11 +375,20 @@ def build_session() -> tuple[AgentSession, bool]:
             model=os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo"),
             language=os.getenv("VOICE_LANGUAGE", "en"),
         ),
+        # Default conversational brain. Used directly unless upstream Hermes is
+        # loaded (see FoxHermesVoiceAgent.llm_node). Groq keeps time-to-first
+        # token low for natural back-and-forth.
+        llm=groq.LLM(
+            model=os.getenv("VOICE_LLM_MODEL", "openai/gpt-oss-20b"),
+            temperature=float(os.getenv("VOICE_LLM_TEMPERATURE", "0.6")),
+        ),
         tts=realtime_tts,
         turn_detection="vad",
         min_endpointing_delay=float(os.getenv("VOICE_MIN_ENDPOINT_MS", "350")) / 1000,
         max_endpointing_delay=float(os.getenv("VOICE_MAX_ENDPOINT_MS", "900")) / 1000,
-        turn_handling={"preemptive_generation": True},
+        # livekit-agents >=1.7 takes this as a direct kwarg; older builds accepted
+        # a turn_handling mapping, which now raises "'bool' object is not a mapping".
+        preemptive_generation=True,
     )
     return session, deepgram_available
 

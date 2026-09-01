@@ -1,5 +1,6 @@
 import { Room, RoomEvent, Track } from 'livekit-client';
 import type { VoicePreference } from '../types';
+import { apiUrl } from './http';
 
 export interface LiveKitTokenResponse {
   token: string;
@@ -50,7 +51,7 @@ export function toLiveKitTtsConfig(voicePrefs?: VoicePreference): LiveKitTtsConf
 }
 
 export async function fetchLiveKitToken(ttsConfig: LiveKitTtsConfig): Promise<LiveKitTokenResponse> {
-  const response = await fetch('/api/livekit/token', {
+  const response = await fetch(apiUrl('/api/livekit/token'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -67,13 +68,31 @@ export async function fetchLiveKitToken(ttsConfig: LiveKitTtsConfig): Promise<Li
   return response.json();
 }
 
+export interface FoxTranscript {
+  /** Latest speech-to-text of what the user said this turn. */
+  user: string;
+  /** Latest transcript of what the agent is saying / said this turn. */
+  agent: string;
+}
+
 export class FoxLiveKitVoiceSession {
   private room: Room | null = null;
   private attachedAudio = new Set<HTMLMediaElement>();
   private agentStateListener: ((state: FoxAgentState) => void) | null = null;
+  private transcriptListener: ((t: FoxTranscript) => void) | null = null;
+  private transcript: FoxTranscript = { user: '', agent: '' };
 
   setAgentStateListener(listener: ((state: FoxAgentState) => void) | null): void {
     this.agentStateListener = listener;
+  }
+
+  setTranscriptListener(listener: ((t: FoxTranscript) => void) | null): void {
+    this.transcriptListener = listener;
+    if (listener) listener({ ...this.transcript });
+  }
+
+  private emitTranscript(): void {
+    this.transcriptListener?.({ ...this.transcript });
   }
 
   async connect(ttsConfig: LiveKitTtsConfig): Promise<Room> {
@@ -103,6 +122,35 @@ export class FoxLiveKitVoiceSession {
         element.remove();
         this.attachedAudio.delete(element);
       });
+    });
+
+    // Live captions: STT of the user's speech and the agent's spoken reply are
+    // both delivered as transcription segments. Segments from the local
+    // participant are the user; anything else is Fox.
+    room.on(RoomEvent.TranscriptionReceived, (segments: any[], participant?: any) => {
+      try {
+        const text = (segments || [])
+          .map((s) => (s && typeof s.text === 'string' ? s.text : ''))
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (!text) return;
+
+        const isUser =
+          !!participant &&
+          !!this.room &&
+          participant.identity === this.room.localParticipant.identity;
+
+        if (isUser) {
+          // A fresh user utterance starts the next turn: drop the old reply.
+          this.transcript = { user: text, agent: '' };
+        } else {
+          this.transcript = { ...this.transcript, agent: text };
+        }
+        this.emitTranscript();
+      } catch (error) {
+        console.debug('[Fox LiveKit] Ignoring transcription segment', error);
+      }
     });
 
     // Keep this handler intentionally tolerant of SDK argument-shape changes.
@@ -151,6 +199,8 @@ export class FoxLiveKitVoiceSession {
       await room.disconnect();
     }
     this.cleanupAudio();
+    this.transcript = { user: '', agent: '' };
+    this.emitTranscript();
     this.agentStateListener?.('idle');
   }
 

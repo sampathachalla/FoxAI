@@ -1,4 +1,5 @@
 import { ChatMessage, AssistantToolCall, DeepgramVoiceItem } from '../types';
+import { apiUrl } from './http';
 
 export interface AssistantChatResponse {
   success: boolean;
@@ -53,7 +54,7 @@ export async function fetchAssistantChat(
   model?: string,
   provider?: string
 ): Promise<AssistantChatResponse> {
-  const response = await fetch('/api/assistant/chat', {
+  const response = await fetch(apiUrl('/api/assistant/chat'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -83,7 +84,7 @@ export async function streamAssistantChat(
 
   (async () => {
     try {
-      const response = await fetch('/api/assistant/chat/stream', {
+      const response = await fetch(apiUrl('/api/assistant/chat/stream'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -147,7 +148,7 @@ export async function fetchDetectTools(
   prompt: string,
   responseText: string
 ): Promise<{ success: boolean; toolsDetected: AssistantToolCall[] }> {
-  const response = await fetch('/api/assistant/detect-tools', {
+  const response = await fetch(apiUrl('/api/assistant/detect-tools'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -163,7 +164,7 @@ export async function fetchDetectTools(
 }
 
 export async function fetchSystemStatus(): Promise<AssistantStatusResponse> {
-  const response = await fetch('/api/assistant/status');
+  const response = await fetch(apiUrl('/api/assistant/status'));
   if (!response.ok) {
     throw new Error('Failed to fetch system status');
   }
@@ -171,7 +172,7 @@ export async function fetchSystemStatus(): Promise<AssistantStatusResponse> {
 }
 
 export async function fetchDeepgramTTS(text: string, model: string = 'aura-2-asteria-en'): Promise<Blob> {
-  const response = await fetch('/api/assistant/tts', {
+  const response = await fetch(apiUrl('/api/assistant/tts'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -188,7 +189,7 @@ export async function fetchDeepgramTTS(text: string, model: string = 'aura-2-ast
 }
 
 export async function fetchDeepgramVoices(): Promise<DeepgramVoicesResponse> {
-  const response = await fetch('/api/assistant/voices');
+  const response = await fetch(apiUrl('/api/assistant/voices'));
   if (!response.ok) {
     throw new Error('Failed to fetch Deepgram voices list');
   }
@@ -200,7 +201,7 @@ export async function fetchHermesTTS(
   engine: 'edge' | 'piper' = 'edge',
   voice?: string
 ): Promise<Blob> {
-  const response = await fetch('/api/assistant/hermes-tts', {
+  const response = await fetch(apiUrl('/api/assistant/hermes-tts'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -217,7 +218,7 @@ export async function fetchHermesTTS(
 }
 
 export async function fetchHermesTTSEngines(): Promise<{ success: boolean; engines: any[] }> {
-  const response = await fetch('/api/assistant/hermes-tts/engines');
+  const response = await fetch(apiUrl('/api/assistant/hermes-tts/engines'));
   if (!response.ok) {
     throw new Error('Failed to fetch Hermes TTS engines');
   }
@@ -227,7 +228,7 @@ export async function fetchHermesTTSEngines(): Promise<{ success: boolean; engin
 export async function fetchHermesTTSVoices(
   engine: 'edge' | 'piper' = 'edge'
 ): Promise<{ success: boolean; engine: string; voices: any[] }> {
-  const response = await fetch(`/api/assistant/hermes-tts/voices?engine=${encodeURIComponent(engine)}`);
+  const response = await fetch(apiUrl(`/api/assistant/hermes-tts/voices?engine=${encodeURIComponent(engine)}`));
   if (!response.ok) {
     throw new Error('Failed to fetch Hermes TTS voices');
   }

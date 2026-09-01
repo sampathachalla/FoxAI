@@ -69,16 +69,17 @@ services:
       - python-agent
     restart: unless-stopped
 
-  # React / Vite frontend (port 3000)
+  # React / Vite frontend (port 3000). Talks to the API through Vite's `/api`
+  # proxy; inside Compose the proxy target is the `api` service, not localhost.
   app:
     image: node:22-alpine
     container_name: fox-jarvis-app
     working_dir: /app
-    command: sh -c "npm install && npm run dev -- --host"
+    command: sh -c "npm install && npm run dev -- --host --port 3000"
     ports:
       - "3000:3000"
     environment:
-      - VITE_API_URL=http://localhost:3001
+      - VITE_PROXY_TARGET=http://api:3001
     volumes:
       - ./app:/app
       - /app/node_modules

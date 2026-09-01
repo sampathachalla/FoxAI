@@ -724,18 +724,32 @@ function generatePlanetariumPoints(
   return particles;
 }
 
-export const FloatingOrb: React.FC = () => {
+export const FloatingOrb: React.FC<{
+  /** When Voice mode runs through the realtime LiveKit agent, the orb's state,
+   *  captions and click handler are driven by that session, not the legacy path. */
+  statusOverride?: AssistantStatus;
+  onOrbClick?: () => void;
+  /** Live STT of what the user is saying (shown while listening). */
+  transcriptOverride?: string;
+  /** Live transcript of Fox's spoken reply (shown while speaking). */
+  spokenOverride?: string;
+}> = ({ statusOverride, onOrbClick, transcriptOverride, spokenOverride }) => {
   const {
-    status,
+    status: contextStatus,
     audioLevel,
     frequencyData,
     accentTheme,
     coreShape = 'sphere',
     toggleListening,
-    currentTranscript,
-    speakingTranscript,
+    currentTranscript: contextCurrentTranscript,
+    speakingTranscript: contextSpeakingTranscript,
     deviceSettings,
   } = useVoiceAssistant();
+
+  const status = statusOverride ?? contextStatus;
+  const handleOrbClick = onOrbClick ?? toggleListening;
+  const currentTranscript = transcriptOverride ?? contextCurrentTranscript;
+  const speakingTranscript = spokenOverride ?? contextSpeakingTranscript;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const isVoiceActive = status === 'listening' || status === 'speaking';
@@ -1363,7 +1377,7 @@ export const FloatingOrb: React.FC = () => {
       {/* 3D Multi-Shape Procedural Intelligence Stage */}
       <div
         id="main-assistant-orb-stage"
-        onClick={toggleListening}
+        onClick={handleOrbClick}
         className="relative w-full h-full flex-1 min-h-0 flex items-center justify-center cursor-grab active:cursor-grabbing transition-transform"
         role="button"
         tabIndex={0}

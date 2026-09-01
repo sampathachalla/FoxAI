@@ -6,46 +6,97 @@ import {
   toLiveKitTtsConfig,
 } from '../services/livekitVoice';
 
-export function useLiveKitVoice(voicePrefs?: VoicePreference) {
+/**
+ * One LiveKit session for the whole tab, kept outside React so it survives
+ * component remounts, hot-reloads and StrictMode double-invokes. Without this,
+ * every remount tore down the room mid-turn and started a new one, so the agent
+ * never got to answer.
+ */
+let sharedSession: FoxLiveKitVoiceSession | null = null;
+function getSession(): FoxLiveKitVoiceSession {
+  if (!sharedSession) sharedSession = new FoxLiveKitVoiceSession();
+  return sharedSession;
+}
+
+// A remount within this window reuses the live room instead of reconnecting.
+const DISCONNECT_GRACE_MS = 5000;
+let pendingDisconnect: ReturnType<typeof setTimeout> | null = null;
+let inFlightConnect: Promise<void> | null = null;
+
+interface UseLiveKitVoiceOptions {
+  /** Connect as soon as the consuming component mounts (Voice mode). */
+  autoConnect?: boolean;
+}
+
+export function useLiveKitVoice(
+  voicePrefs?: VoicePreference,
+  options: UseLiveKitVoiceOptions = {},
+) {
+  const { autoConnect = false } = options;
   const enabled = Boolean((import.meta as any).env?.VITE_LIVEKIT_VOICE_ENABLED === 'true');
-  const sessionRef = useRef<FoxLiveKitVoiceSession | null>(null);
+
   const voicePrefsRef = useRef<VoicePreference | undefined>(voicePrefs);
-  const [connected, setConnected] = useState(false);
+  voicePrefsRef.current = voicePrefs;
+
+  const [connected, setConnected] = useState(() => getSession().isConnected());
   const [connecting, setConnecting] = useState(false);
   const [agentState, setAgentState] = useState<FoxAgentState>('idle');
   const [error, setError] = useState<string | null>(null);
-
-  voicePrefsRef.current = voicePrefs;
-
-  if (!sessionRef.current) {
-    sessionRef.current = new FoxLiveKitVoiceSession();
-  }
+  const [userTranscript, setUserTranscript] = useState('');
+  const [agentTranscript, setAgentTranscript] = useState('');
 
   useEffect(() => {
-    sessionRef.current?.setAgentStateListener(setAgentState);
-    return () => sessionRef.current?.setAgentStateListener(null);
+    const session = getSession();
+    session.setAgentStateListener(setAgentState);
+    session.setTranscriptListener((t) => {
+      setUserTranscript(t.user);
+      setAgentTranscript(t.agent);
+    });
+    return () => {
+      session.setAgentStateListener(null);
+      session.setTranscriptListener(null);
+    };
   }, []);
 
   const connect = useCallback(async () => {
-    if (!enabled || connecting || connected) return;
+    if (!enabled) return;
+    if (pendingDisconnect) {
+      clearTimeout(pendingDisconnect);
+      pendingDisconnect = null;
+    }
+    const session = getSession();
+    if (session.isConnected()) {
+      setConnected(true);
+      return;
+    }
+    if (inFlightConnect) return inFlightConnect;
+
     setConnecting(true);
     setError(null);
-    try {
-      await sessionRef.current!.connect(toLiveKitTtsConfig(voicePrefsRef.current));
-      setConnected(true);
-      setAgentState('listening');
-    } catch (err) {
-      setConnected(false);
-      setAgentState('idle');
-      setError(err instanceof Error ? err.message : 'Failed to start realtime voice');
-      throw err;
-    } finally {
-      setConnecting(false);
-    }
-  }, [enabled, connecting, connected]);
+    inFlightConnect = session
+      .connect(toLiveKitTtsConfig(voicePrefsRef.current))
+      .then(() => {
+        setConnected(true);
+        setAgentState('listening');
+      })
+      .catch((err) => {
+        setConnected(false);
+        setAgentState('idle');
+        setError(err instanceof Error ? err.message : 'Failed to start realtime voice');
+      })
+      .finally(() => {
+        setConnecting(false);
+        inFlightConnect = null;
+      });
+    return inFlightConnect;
+  }, [enabled]);
 
   const disconnect = useCallback(async () => {
-    await sessionRef.current?.disconnect();
+    if (pendingDisconnect) {
+      clearTimeout(pendingDisconnect);
+      pendingDisconnect = null;
+    }
+    await getSession().disconnect();
     setConnected(false);
     setConnecting(false);
     setAgentState('idle');
@@ -53,29 +104,45 @@ export function useLiveKitVoice(voicePrefs?: VoicePreference) {
 
   const toggle = useCallback(async () => {
     if (!enabled) return;
-    if (connected) {
+    if (getSession().isConnected()) {
       await disconnect();
     } else {
       await connect();
     }
-  }, [enabled, connected, connect, disconnect]);
+  }, [enabled, connect, disconnect]);
 
+  // Auto-connect for Voice mode, with a grace period on unmount so a remount
+  // (hot reload, mode toggle, StrictMode) does not kill an active call.
+  useEffect(() => {
+    if (!enabled || !autoConnect) return;
+    void connect();
+    return () => {
+      if (pendingDisconnect) clearTimeout(pendingDisconnect);
+      pendingDisconnect = setTimeout(() => {
+        pendingDisconnect = null;
+        void getSession().disconnect();
+        setConnected(false);
+        setAgentState('idle');
+      }, DISCONNECT_GRACE_MS);
+    };
+  }, [enabled, autoConnect, connect]);
+
+  // Push voice/TTS preference changes to the live agent without reconnecting.
   useEffect(() => {
     if (!enabled || !connected) return;
-
-    void sessionRef.current
-      ?.updateTtsConfig(toLiveKitTtsConfig(voicePrefs))
+    void getSession()
+      .updateTtsConfig(toLiveKitTtsConfig(voicePrefs))
       .catch((err) => {
         console.error('[Fox LiveKit] Failed to update TTS settings:', err);
-        setError(err instanceof Error ? err.message : 'Failed to update realtime TTS settings');
       });
-  }, [enabled, connected, voicePrefs?.provider, voicePrefs?.deepgramVoice, voicePrefs?.hermesEdgeVoice, voicePrefs?.hermesPiperVoice]);
-
-  useEffect(() => {
-    return () => {
-      void sessionRef.current?.disconnect();
-    };
-  }, []);
+  }, [
+    enabled,
+    connected,
+    voicePrefs?.provider,
+    voicePrefs?.deepgramVoice,
+    voicePrefs?.hermesEdgeVoice,
+    voicePrefs?.hermesPiperVoice,
+  ]);
 
   return {
     enabled,
@@ -83,6 +150,8 @@ export function useLiveKitVoice(voicePrefs?: VoicePreference) {
     connecting,
     agentState,
     error,
+    userTranscript,
+    agentTranscript,
     connect,
     disconnect,
     toggle,

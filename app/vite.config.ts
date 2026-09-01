@@ -13,9 +13,12 @@ export default defineConfig(() => {
     },
     server: {
       port: 3000,
+      host: true,
       proxy: {
         '/api': {
-          target: 'http://localhost:3001',
+          // Overridable so the same config works when Vite runs inside a
+          // container (target `http://api:3001`) instead of on the host.
+          target: process.env.VITE_PROXY_TARGET || 'http://localhost:3001',
           changeOrigin: true,
         },
       },
