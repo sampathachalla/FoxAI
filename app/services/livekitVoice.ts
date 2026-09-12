@@ -153,6 +153,33 @@ export class FoxLiveKitVoiceSession {
       }
     });
 
+    // Primary agent-state source: livekit-agents publishes the agent's state
+    // ("listening" | "thinking" | "speaking" | "initializing" | "idle") as the
+    // `lk.agent.state` attribute on the agent participant. This works regardless
+    // of which brain the worker uses; the fox.agent.state data packet below is
+    // only an extra channel for the richer "searching" state.
+    const applyAgentStateAttr = (attrs?: Record<string, string>) => {
+      const raw = attrs?.['lk.agent.state'];
+      if (!raw) return;
+      const mapped: FoxAgentState | undefined = (
+        {
+          initializing: 'thinking',
+          listening: 'listening',
+          thinking: 'thinking',
+          speaking: 'speaking',
+          idle: 'idle',
+        } as Record<string, FoxAgentState>
+      )[raw];
+      if (mapped) this.agentStateListener?.(mapped);
+    };
+
+    room.on(RoomEvent.ParticipantAttributesChanged, (_changed, participant: any) => {
+      if (participant && !participant.isLocal) applyAgentStateAttr(participant.attributes);
+    });
+    room.on(RoomEvent.ParticipantConnected, (participant: any) => {
+      if (participant && !participant.isLocal) applyAgentStateAttr(participant.attributes);
+    });
+
     // Keep this handler intentionally tolerant of SDK argument-shape changes.
     // Search state is supplemental UI and must never affect the audio session.
     room.on(RoomEvent.DataReceived, (...args: any[]) => {
@@ -179,6 +206,11 @@ export class FoxLiveKitVoiceSession {
     await room.localParticipant.setMicrophoneEnabled(true);
     this.room = room;
     this.agentStateListener?.('listening');
+
+    // The agent may already be in the room with a state attribute set.
+    room.remoteParticipants.forEach((p: any) => {
+      if (p && !p.isLocal) applyAgentStateAttr(p.attributes);
+    });
     return room;
   }
 

@@ -1,7 +1,7 @@
 import { HermesToolRegistry, createDefaultToolRegistry } from './tools';
 import { HermesAgentOptions, HermesAgentResult, HermesStep, HermesToolDefinition } from './types';
-import { generateAssistantResponse } from '../services/gemini.service';
-import { ChatMessage } from '../models/assistant.types';
+import { generateAssistantResponse } from '../gemini.service';
+import { ChatMessage } from '../../models/assistant.types';
 
 export * from './types';
 export * from './tools';

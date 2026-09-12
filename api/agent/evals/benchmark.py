@@ -1,7 +1,7 @@
 import asyncio
 import time
 from typing import Any, Dict, List
-from agents.hermes_agent import HermesAgent
+from agents.local_agent import FoxLocalAgent
 
 BENCHMARK_CASES = [
     {
@@ -23,7 +23,7 @@ BENCHMARK_CASES = [
 
 class AgentBenchmark:
     def __init__(self):
-        self.agent = HermesAgent()
+        self.agent = FoxLocalAgent()
 
     async def run_benchmark(self) -> Dict[str, Any]:
         results: List[Dict[str, Any]] = []

@@ -7,10 +7,9 @@
     "api"
   ],
   "scripts": {
-    "dev": "npm run dev:wakeword & npm run dev:app & npm run dev:api",
+    "dev": "npm run dev:app & npm run dev:api",
     "dev:app": "npm run dev --workspace=app",
     "dev:api": "npm run dev --workspace=api",
-    "dev:wakeword": "cd api/wakeword && (./.venv/bin/python main.py || python3 main.py)",
     "build": "npm run build --workspace=app && npm run build --workspace=api",
     "build:app": "npm run build --workspace=app",
     "build:api": "npm run build --workspace=api",

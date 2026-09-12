@@ -10,7 +10,14 @@ from observability.tracer import AgentTracer
 from chains.react_chain import ReActChain
 from .base import BaseAgent
 
-class HermesAgent(BaseAgent):
+class FoxLocalAgent(BaseAgent):
+    """FoxAI's own offline ReAct executor over FoxAI's tool registry.
+
+    This is not Hermes. It exists solely as an unbranded fallback used when
+    the real orchestrator — upstream Nous Research Hermes — cannot load.
+    See agents/hermes_orchestrator.py for the actual Hermes entry point.
+    """
+
     def __init__(
         self,
         model: Optional[str] = None,

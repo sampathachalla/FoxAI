@@ -1,12 +1,16 @@
 """Low-latency LiveKit voice worker for FoxAI.
 
 Ears: LiveKit WebRTC -> Silero VAD -> Groq Whisper Large v3 Turbo
-Brain: official Hermes runtime (safe FoxAI compatibility fallback)
+Brain: Groq LLM, directly, via LiveKit's own llm_node
 Mouth: frontend-selectable Edge / Piper / Deepgram TTS
 
-The worker keeps transport, reasoning, and speech synthesis behind explicit
-pipeline boundaries. Hermes and TTS streams are cancellation-aware so a
-barge-in does not leave an old turn racing the new one.
+This worker is a LiveKit Agent — pure realtime transport. It carries no
+Hermes dependency and no reasoning of its own beyond the session's own LLM:
+for anything heavier than a quick spoken reply it hands the task off to the
+separate FastAPI agent process (see ``delegate_to_worker_agent`` below),
+which is where FoxAI's real orchestrator — upstream Nous Research Hermes —
+lives. TTS streams are cancellation-aware so a barge-in does not leave an old
+turn racing the new one.
 """
 
 from __future__ import annotations
@@ -21,14 +25,23 @@ from dataclasses import dataclass, field
 from typing import AsyncIterable, AsyncIterator, Callable, Optional
 
 from dotenv import load_dotenv
+
+import aiohttp
 from livekit import rtc
-from livekit.agents import Agent, AgentServer, AgentSession, JobContext, cli
+from livekit.agents import (
+    Agent,
+    AgentServer,
+    AgentSession,
+    JobContext,
+    RunContext,
+    cli,
+    function_tool,
+)
 from livekit.agents.utils.audio import AudioByteStream
 from livekit.agents.utils.codecs import AudioStreamDecoder
 from livekit.plugins import deepgram, groq, silero
 
-from Tts.service import stream_encoded_speech, stream_pcm_speech
-from voice.hermes_adapter import HermesVoiceAdapter, HermesStateCallback
+from tts.service import stream_encoded_speech, stream_pcm_speech
 
 load_dotenv()
 logger = logging.getLogger("fox.voice")
@@ -39,7 +52,13 @@ FIRST_PHRASE_MIN_CHARS = int(os.getenv("VOICE_TTS_FIRST_PHRASE_MIN_CHARS", "24")
 FIRST_PHRASE_MAX_CHARS = int(os.getenv("VOICE_TTS_FIRST_PHRASE_MAX_CHARS", "96"))
 PHRASE_MIN_CHARS = int(os.getenv("VOICE_TTS_PHRASE_MIN_CHARS", "44"))
 PHRASE_MAX_CHARS = int(os.getenv("VOICE_TTS_PHRASE_MAX_CHARS", "180"))
-AGENT_STATE_TOPIC = "fox.agent.state"
+
+# The heavy FastAPI agent (backed by upstream Hermes) runs as a separate
+# process in this same container. Keeping the HTTP boundary prevents
+# long-running work from blocking voice turns.
+PYTHON_AGENT_URL = os.getenv("HERMES_FASTAPI_URL", "http://127.0.0.1:8000").rstrip("/")
+DELEGATE_TIMEOUT_S = float(os.getenv("VOICE_DELEGATE_TIMEOUT_S", "180"))
+DELEGATE_SPOKEN_CHARS = int(os.getenv("VOICE_DELEGATE_SPOKEN_CHARS", "700"))
 
 
 @dataclass
@@ -67,51 +86,18 @@ class TurnLatency:
             value = self.marks.get(name)
             return round((value - base) * 1000, 1) if value is not None else None
 
-        def delta_ms(start: str, end: str) -> Optional[float]:
-            start_value = self.marks.get(start)
-            end_value = self.marks.get(end)
-            if start_value is None or end_value is None:
-                return None
-            return round((end_value - start_value) * 1000, 1)
-
         logger.info(
             "voice_latency turn=%s provider=%s speech_end_to_stt_ms=%s "
-            "speech_end_to_hermes_ms=%s speech_end_to_search_ms=%s "
-            "agent_reach_ms=%s speech_end_to_first_llm_ms=%s "
+            "speech_end_to_llm_start_ms=%s speech_end_to_first_llm_ms=%s "
             "speech_end_to_first_phrase_ms=%s speech_end_to_first_audio_ms=%s",
             self.turn_no,
             provider,
             ms("stt_final"),
-            ms("hermes_start"),
-            ms("agent_reach_start"),
-            delta_ms("agent_reach_start", "agent_reach_result"),
+            ms("llm_start"),
             ms("first_llm_delta"),
             ms("first_tts_phrase"),
             ms("first_audio"),
         )
-
-
-def _message_text(message) -> str:
-    value = getattr(message, "text_content", None)
-    if callable(value):
-        value = value()
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    content = getattr(message, "content", "")
-    if isinstance(content, str):
-        return content.strip()
-    return ""
-
-
-def _latest_user_text(chat_ctx) -> str:
-    items = getattr(chat_ctx, "items", None) or getattr(chat_ctx, "messages", None) or []
-    for item in reversed(list(items)):
-        role = getattr(item, "role", None)
-        if role == "user" or str(role).lower().endswith("user"):
-            text = _message_text(item)
-            if text:
-                return text
-    return ""
 
 
 def _best_cut(buffer: str, min_chars: int, max_chars: int) -> int:
@@ -274,23 +260,89 @@ async def _fox_tts_audio(
             yield frame
 
 
-class FoxHermesVoiceAgent(Agent):
+# Background task refs kept alive at module scope (a module-level tool has no
+# instance to hold them). Discarded automatically when each task finishes.
+_DELEGATIONS: set[asyncio.Task] = set()
+
+
+async def _run_delegation(session: AgentSession, task: str) -> None:
+    """Call the heavy python agent and speak its result. Never raises."""
+    try:
+        timeout = aiohttp.ClientTimeout(total=DELEGATE_TIMEOUT_S)
+        async with aiohttp.ClientSession(timeout=timeout) as http:
+            async with http.post(
+                f"{PYTHON_AGENT_URL}/agent/run", json={"prompt": task}
+            ) as resp:
+                body = await resp.text()
+                if resp.status != 200:
+                    raise RuntimeError(f"HTTP {resp.status}: {body[:200]}")
+                payload = json.loads(body)
+    except Exception:
+        logger.exception("Delegated task failed")
+        try:
+            await session.say("Sorry, I ran into a problem finishing that task.")
+        except Exception:
+            logger.debug("Could not announce delegation failure", exc_info=True)
+        return
+
+    data = payload.get("data") if isinstance(payload, dict) else None
+    text = ""
+    if isinstance(data, dict):
+        text = str(data.get("text") or data.get("final_response") or "").strip()
+    if not text:
+        text = "That's finished, but the agent returned no text."
+
+    spoken = (
+        text
+        if len(text) <= DELEGATE_SPOKEN_CHARS
+        else text[:DELEGATE_SPOKEN_CHARS].rstrip() + "…"
+    )
+    try:
+        await session.say(f"Okay, here's what I've got. {spoken}")
+    except Exception:
+        logger.exception("Failed to speak delegated result")
+
+
+@function_tool
+async def delegate_to_worker_agent(context: RunContext, task: str) -> str:
+    """Hand off work that needs more than a quick spoken answer: drafting or
+    writing documents, research that needs web sources, code, data lookups, or
+    any task that takes multiple steps or tools. The heavy FastAPI agent process
+    runs it in the background and the result is spoken aloud when ready.
+    Reply to the user with a short acknowledgement only; do not attempt the task
+    yourself.
+
+    Args:
+        task: A self-contained description of what to produce, in the user's own
+            words plus any context needed to do it without a follow-up question.
+    """
+    job = asyncio.create_task(_run_delegation(context.session, task))
+    _DELEGATIONS.add(job)
+    job.add_done_callback(_DELEGATIONS.discard)
+    logger.info("Delegated task to python agent: %s", task[:160])
+    return (
+        "Working on that in the background now — I'll read it back to you as "
+        "soon as it's ready."
+    )
+
+
+class FoxVoiceAgent(Agent):
     def __init__(
         self,
         *,
         deepgram_available: bool,
-        session_id: str,
-        state_callback: Optional[HermesStateCallback] = None,
     ) -> None:
         super().__init__(
             instructions=(
                 "You are Fox, a fast conversational voice assistant. "
-                "Keep spoken answers natural and concise."
-            )
-        )
-        self.hermes = HermesVoiceAdapter(
-            session_id=session_id,
-            state_callback=state_callback,
+                "Keep spoken answers natural and concise. "
+                "For anything that needs real work rather than a quick reply "
+                "— drafting or writing documents, research with sources, "
+                "code, data lookups, or multi-step tasks — call the "
+                "delegate_to_worker_agent tool and give the user a brief "
+                "acknowledgement while it runs."
+            ),
+            tools=[delegate_to_worker_agent],
         )
         self.deepgram_available = deepgram_available
         self.tts_provider = (
@@ -298,7 +350,6 @@ class FoxHermesVoiceAgent(Agent):
         )
         self.tts_voice = ""
         self.latency = TurnLatency()
-        logger.info("Hermes voice runtime: %s session=%s", self.hermes.runtime_name, session_id)
 
     def update_tts_preferences(self, provider: str | None, voice: str | None) -> None:
         requested = (provider or "").strip().lower()
@@ -319,31 +370,12 @@ class FoxHermesVoiceAgent(Agent):
         )
 
     async def llm_node(self, chat_ctx, tools, model_settings):
-        """Route the turn through upstream Hermes when it is actually loaded;
-        otherwise fall back to the session LLM (Groq), which is fast and always
-        available. Without this fallback a broken Hermes import left the agent
-        transcribing speech but never replying."""
-        if not self.hermes.using_upstream:
-            self.latency.mark("hermes_start")
-            self.latency.mark("first_llm_delta")
-            return Agent.default.llm_node(self, chat_ctx, tools, model_settings)
-
-        transcript = _latest_user_text(chat_ctx)
-        if not transcript:
-            return Agent.default.llm_node(self, chat_ctx, tools, model_settings)
-
-        self.latency.mark("hermes_start")
-        upstream = self.hermes.stream_response(transcript)
-
-        async def measured_stream() -> AsyncIterator[str]:
-            first = True
-            async for delta in upstream:
-                if first:
-                    first = False
-                    self.latency.mark("first_llm_delta")
-                yield delta
-
-        return measured_stream()
+        """Answer directly with the session's own LLM (Groq). The voice agent
+        carries no Hermes dependency — heavier asks go through
+        delegate_to_worker_agent instead of routing this turn elsewhere."""
+        self.latency.mark("llm_start")
+        self.latency.mark("first_llm_delta")
+        return Agent.default.llm_node(self, chat_ctx, tools, model_settings)
 
     async def tts_node(self, text: AsyncIterable[str], model_settings):
         """Snapshot the selected provider for this reply; changes apply next reply."""
@@ -375,9 +407,8 @@ def build_session() -> tuple[AgentSession, bool]:
             model=os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo"),
             language=os.getenv("VOICE_LANGUAGE", "en"),
         ),
-        # Default conversational brain. Used directly unless upstream Hermes is
-        # loaded (see FoxHermesVoiceAgent.llm_node). Groq keeps time-to-first
-        # token low for natural back-and-forth.
+        # The voice agent's conversational brain. Groq keeps time-to-first
+        # token low for natural back-and-forth; see FoxVoiceAgent.llm_node.
         llm=groq.LLM(
             model=os.getenv("VOICE_LLM_MODEL", "openai/gpt-oss-20b"),
             temperature=float(os.getenv("VOICE_LLM_TEMPERATURE", "0.6")),
@@ -402,44 +433,11 @@ async def entrypoint(ctx: JobContext) -> None:
     logger.info("Starting Fox realtime voice session for room %s", ctx.room.name)
 
     session, deepgram_available = build_session()
-    loop = asyncio.get_running_loop()
 
-    async def publish_agent_state(state: str, metadata: dict) -> None:
-        payload = json.dumps(
-            {
-                "type": "agent_state",
-                "state": state,
-                **metadata,
-            },
-            separators=(",", ":"),
-        )
-        try:
-            await ctx.room.local_participant.publish_data(
-                payload,
-                reliable=True,
-                topic=AGENT_STATE_TOPIC,
-            )
-        except Exception:
-            # State UI is supplemental; a data-channel issue must never break
-            # reasoning, search, TTS, or the voice session itself.
-            logger.debug("Failed to publish agent state=%s", state, exc_info=True)
-
-    def on_hermes_state(state: str, metadata: dict) -> None:
-        if state == "searching":
-            agent.latency.mark("agent_reach_start")
-        elif state == "thinking" and metadata.get("source") == "agent_reach":
-            agent.latency.mark("agent_reach_result")
-
-        def schedule() -> None:
-            asyncio.create_task(publish_agent_state(state, metadata))
-
-        loop.call_soon_threadsafe(schedule)
-
-    agent = FoxHermesVoiceAgent(
-        deepgram_available=deepgram_available,
-        session_id=ctx.room.name,
-        state_callback=on_hermes_state,
-    )
+    # Agent state (listening/thinking/speaking/idle) reaches the frontend for
+    # free via livekit-agents' own `lk.agent.state` participant attribute —
+    # no custom data-channel publishing needed here.
+    agent = FoxVoiceAgent(deepgram_available=deepgram_available)
 
     def apply_participant_preferences(participant) -> None:
         attrs = participant.attributes or {}
@@ -469,21 +467,6 @@ async def entrypoint(ctx: JobContext) -> None:
     def on_user_input_transcribed(ev) -> None:
         if bool(getattr(ev, "is_final", True)):
             agent.latency.mark("stt_final")
-
-    @session.on("speech_created")
-    def on_speech_created(ev) -> None:
-        handle = getattr(ev, "speech_handle", None)
-        if handle is None:
-            return
-
-        async def observe() -> None:
-            try:
-                await handle
-            finally:
-                if bool(getattr(handle, "interrupted", False)):
-                    agent.hermes.interrupt_current(reason="LiveKit speech interrupted")
-
-        asyncio.create_task(observe())
 
     await session.start(room=ctx.room, agent=agent)
     await ctx.connect()

@@ -14,8 +14,7 @@
 fox-jarvis-inspiration/
 ├── app/          React + Vite + Tailwind CSS frontend (port 3000)
 ├── api/          Node.js + Express REST API (port 3001)
-│   ├── agent/    Python FastAPI Hermes Agent microservice (port 8000)
-│   └── wakeword/ Python FastAPI OpenWakeWord service (port 8011)
+│   ├── agent/    Combined FastAPI Hermes Agent + LiveKit voice worker (port 8000)
 │   └── services/ Gemini, OpenAI, Deepgram integrations
 ```
 
@@ -59,22 +58,8 @@ To also run the Python Hermes Agent microservice:
 cd api/agent
 pip install -r requirements.txt
 python main.py
-# → Agent: http://localhost:8000
+# → Combined agent/voice container: http://localhost:8000
 ```
-
-To run wake-word detection for Fox:
-
-```bash
-cd api/wakeword
-python3 -m venv .venv
-./.venv/bin/python -m pip install -r requirements.txt
-./.venv/bin/python main.py
-# → Wake-word service: http://localhost:8011
-```
-
-By default, the wake-word service uses OpenWakeWord's built-in `Hey Jarvis` model. You can later swap to a custom ONNX wake-word model by setting `WAKEWORD_MODEL_PATH`.
-
----
 
 ## Run with Docker Compose
 

@@ -1418,9 +1418,17 @@ export const FloatingOrb: React.FC<{
           </h1>
         ) : isThinking ? (
           <h1 className="text-xl md:text-2xl lg:text-3xl font-semibold tracking-tight text-white flex items-center justify-center space-x-2">
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-white to-cyan-400 animate-pulse">
-              {THINKING_PHRASES[thinkingPhraseIndex]}
-            </span>
+            {currentTranscript ? (
+              // Keep the user's own words on screen while Fox is working, so the
+              // realtime turn stays legible instead of flashing stock phrases.
+              <span className="text-white/90 text-lg md:text-xl lg:text-2xl font-medium">
+                "{currentTranscript}"
+              </span>
+            ) : (
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-white to-cyan-400 animate-pulse">
+                {THINKING_PHRASES[thinkingPhraseIndex]}
+              </span>
+            )}
             <span
               className="inline-block w-2 h-2 rounded-full animate-ping"
               style={{ backgroundColor: accentTheme.primary }}

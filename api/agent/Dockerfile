@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Ensure Piper voice model directory exists even if empty in the build context
-RUN mkdir -p Tts/piper_models
+RUN mkdir -p tts/piper_models
 
 EXPOSE 8000
 

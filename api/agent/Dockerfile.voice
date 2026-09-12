@@ -33,6 +33,9 @@ COPY requirements.txt .
 RUN uv pip install --system -r requirements.txt
 
 COPY . .
-RUN mkdir -p Tts/piper_models /root/.agent-reach
+RUN mkdir -p tts/piper_models /root/.agent-reach
+RUN chmod +x start-combined.sh
 
-CMD ["python", "-m", "voice.worker", "dev"]
+EXPOSE 8000
+
+CMD ["./start-combined.sh"]

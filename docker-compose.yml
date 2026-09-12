@@ -1,31 +1,15 @@
 services:
-  # Existing Python FastAPI agent stays on its original image/runtime.
-  python-agent:
-    build:
-      context: ./api/agent
-      dockerfile: Dockerfile
-    container_name: fox-python-agent
-    ports:
-      - "8000:8000"
-    environment:
-      - FASTAPI_PORT=8000
-    env_file:
-      - path: ./api/.env
-        required: false
-    volumes:
-      - ./api/agent/Tts/piper_models:/app/Tts/piper_models
-    restart: unless-stopped
-
-  # Realtime LiveKit voice worker is opt-in so normal startup remains unchanged.
-  # It uses a separate image containing the official upstream Hermes checkout.
+  # Combined Python service: FastAPI agent (port 8000) + LiveKit voice worker.
+  # They remain separate processes so their Hermes/Python imports stay isolated.
   voice-worker:
-    profiles: ["voice"]
     build:
       context: ./api/agent
       dockerfile: Dockerfile.voice
       args:
         HERMES_UPSTREAM_REF: ${HERMES_UPSTREAM_REF:-v2026.8.27}
     container_name: fox-livekit-voice-worker
+    ports:
+      - "8000:8000"
     env_file:
       - path: ./api/.env
         required: false
@@ -33,11 +17,22 @@ services:
       - HERMES_RUNTIME=auto
       - HERMES_UPSTREAM_PATH=/opt/hermes-agent
       - VOICE_TTS_PROVIDER=edge
+      - FASTAPI_PORT=8000
+      # Heavy work is delegated to the FastAPI process in this same container.
+      - HERMES_FASTAPI_URL=http://127.0.0.1:8000
+      # Flip to "true" to instead run the full upstream Hermes runtime inside
+      # this worker (needs a large per-minute token budget, e.g. Groq Dev tier
+      # or a non-Groq HERMES_BASE_URL). The settings below only apply then.
+      - VOICE_USE_INPROCESS_HERMES=false
+      - HERMES_ENABLED_TOOLSETS=web
+      - HERMES_MAX_ITERATIONS=3
+      - HERMES_SKIP_MEMORY=true
+      - HERMES_SKIP_CONTEXT_FILES=true
     volumes:
-      - ./api/agent/Tts/piper_models:/app/Tts/piper_models
+      - ./api/agent/tts/piper_models:/app/tts/piper_models
     restart: unless-stopped
 
-  # Node.js / Express API server + OpenWakeWord service, one container (ports 3001 & 8011)
+  # Node.js / Express API server (port 3001)
   api:
     build:
       context: ./api
@@ -45,20 +40,11 @@ services:
     container_name: fox-jarvis-api
     ports:
       - "3001:3001"
-      - "8011:8011"
     environment:
       - PORT=3001
       - NODE_ENV=development
-      - HERMES_FASTAPI_URL=http://python-agent:8000
-      - WAKEWORD_PORT=8011
-      - WAKEWORD_SERVICE_URL=http://127.0.0.1:8011
-      - WAKEWORD_PUBLIC_WS_URL=ws://localhost:8011/ws
-      - WAKEWORD_ENABLED=true
-      - WAKEWORD_PHRASE=Hey Jarvis
-      - WAKEWORD_MODEL_KEY=hey jarvis
-      - WAKEWORD_MODEL_PATH=
-      - WAKEWORD_THRESHOLD=0.5
-      - WAKEWORD_COOLDOWN_SECONDS=3.0
+      - HERMES_FASTAPI_URL=http://voice-worker:8000
+      - WAKEWORD_ENABLED=false
     env_file:
       - path: ./api/.env
         required: false
@@ -66,7 +52,7 @@ services:
       - ./api:/app
       - /app/node_modules
     depends_on:
-      - python-agent
+      - voice-worker
     restart: unless-stopped
 
   # React / Vite frontend (port 3000). Talks to the API through Vite's `/api`

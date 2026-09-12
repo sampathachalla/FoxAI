@@ -369,7 +369,7 @@ export async function handleHermesAgent(req: Request, res: Response): Promise<vo
     }
 
     // 2. Fallback to native TypeScript engine
-    const { getHermesAgent } = await import('../agent');
+    const { getHermesAgent } = await import('../services/hermes-fallback');
     const agent = getHermesAgent({ model, provider, temperature });
     const result = await agent.run(prompt, agentHistory);
 
