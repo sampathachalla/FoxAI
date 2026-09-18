@@ -1,76 +1,204 @@
-# Project: Notion-Feel Notes Tool for Fox Assistant
+# Fox Jarvis Project Architecture
 
-## Architecture
-- **Component Root**: `/Users/sampath/Desktop/fox-jarvis-inspiration/app/components/notse`
-- **Data Flow**:
-  - `NotesWorkspace.tsx` manages dual view modes (`gallery` vs `editor`), active note selection, full-text search, and multi-tag filtering.
-  - Bidirectional State Synchronization: Notes state is stored in `localStorage` under `fox_documents_v1` (rich block structure) & synced with `fox_notes_v1` / `AssistantContext.notes` (Markdown-serialized string `content` + metadata) so voice commands seamlessly populate the Notion workspace.
-  - `NoteEditor.tsx` renders editable emoji header, auto-resizing title, tag badges, auto-save indicator, and block stream (`BlockItem.tsx`).
-  - `BlockItem.tsx` handles polymorphic rendering and keyboard state machine (`Enter` to split/new block, `Backspace` to convert/delete, arrow navigation, interactive to-do checkboxes, code blocks with copy & language badges, callout icon containers, quotes, dividers).
-  - `SlashMenu.tsx` provides quick `/` command palette with fuzzy filtering and keyboard navigation (`ArrowUp`/`ArrowDown`/`Enter`/`Escape`).
-  - `NotesGallery.tsx` displays Notion-style note cards with emoji, snippet previews, tag pills, timestamps, and search/filter controls.
-  - `ToolsManagerView.tsx` mounts `<NotesWorkspace />` replacing the legacy notes tab.
+## Architecture objective
 
-## Code Layout
+Fox Jarvis is moving from three coupled containers to eight independently
+deployable services. The design keeps one Compose project and one shared
+network while giving every runtime its own dependency boundary, environment
+file, health policy, and persistent storage where applicable.
+
+## Service chain
+
+```text
+                         +----------------+
+                         |   local-llm    |
+                         |     Ollama     |
+                         +-------^--------+
+                                 |
++---------+      +---------+     |      +----------------+
+| browser |----->|   web   |---->| api  |-----> postgres |
++---------+      |  Vite   |     |Node  |      | pgvector |
+                 +---------+     +--+----+      +----------------+
+                                    |
+                                    v
+                              +-----------+
+                              |   agent   |
+                              | FastAPI + |
+                              |  Hermes   |
+                              +-----^-----+
+                                    |
+                              +-----+-----+
+                              |   voice   |<----> LiveKit
+                              | VAD/STT/  |
+                              | LLM/TTS   |
+                              +-----------+
+
+Extended profile: api/agent ----> neo4j
+                  api/agent ----> minio
 ```
-app/
-├── components/
-│   ├── notse/
-│   │   ├── notseTypes.ts        # Type contracts (BlockType, NoteBlock, NoteDocument, SlashMenuItemDef)
-│   │   ├── markdownUtils.ts     # Bidirectional serialization (blocks <-> Markdown string, export)
-│   │   ├── EmojiPicker.tsx      # Categorized emoji popover with search filter
-│   │   ├── TagBadge.tsx         # Tag badge pill with color theming & remove/filter actions
-│   │   ├── SlashMenu.tsx        # Floating slash command menu with keyboard navigation
-│   │   ├── BlockItem.tsx        # Polymorphic block editor (headings, todos, code, callout, quote, divider, paragraph)
-│   │   ├── NoteEditor.tsx       # Distraction-free Notion-feel document canvas & header controls
-│   │   ├── NotesGallery.tsx     # Notion card grid, real-time search bar & tag filter bar
-│   │   ├── NotesWorkspace.tsx   # Top-level workspace router & state coordinator
-│   │   └── index.ts             # Clean barrel exports
-│   ├── ToolsManagerView.tsx     # Upgraded to mount <NotesWorkspace />
-│   └── ...
-├── store/
-│   └── assistantContext.tsx     # Voice notes integration and sync
-└── types/
-    └── index.ts                 # NoteItem type extension if applicable
-```
 
-## Feature Inventory
-| # | Feature | Description | Milestone | Source |
-|---|---------|-------------|-----------|--------|
-| 1 | Block Data Model & Contracts | 11 block types (Paragraph, H1, H2, H3, To-do, Bullet, Numbered, Code, Callout, Quote, Divider) and Document models | M1 | survey |
-| 2 | Markdown Bidirectional Serializer | Convert between `NoteBlock[]` and Markdown string, export `.md` file download | M1 | survey |
-| 3 | Emoji Picker & Tag Badge Components | Categorized emoji popover with search, colored tag badges with remove/filter | M2 | survey |
-| 4 | Slash Command Palette (`/`) | Floating `/` command menu with fuzzy search, keyboard navigation (`Up`/`Down`/`Enter`/`Esc`) | M2 | survey |
-| 5 | Polymorphic Block Renderer & Keyboard Engine | Interactive checkboxes, code snippet copy, callouts, quotes, Enter/Backspace state transitions | M2 | survey |
-| 6 | Notion-Feel Document Editor Canvas | Auto-resizing title, page emoji, tag manager, auto-save status pill ("Saved"/"Saving..."), Markdown export, AI chat trigger | M3 | survey |
-| 7 | Notes Gallery & Card Grid | Notion-style card grid with emoji, snippet previews, tag pills, last modified timestamps, hover actions (dup/delete/export) | M3 | survey |
-| 8 | Real-Time Full-Text Search & Multi-Tag Filtering | Multi-field instant search across titles, contents, tags, and category tag filter pills | M3 | survey |
-| 9 | ToolsManagerView & Assistant Voice Sync Integration | Clean integration with `ToolsManagerView.tsx`, bidirectional sync with `AssistantContext.notes` & `fox_documents_v1` / `fox_notes_v1` | M4 | survey |
-| 10 | Comprehensive Test Suite & Adversarial Hardening | Unit & E2E verification test suite (Tiers 1-4) + adversarial validation (Tier 5) passing `npm run build` | M5 | survey |
+All services are members of `fox-network`. Internal calls use service names,
+never host `localhost`:
 
-## Milestones
-| # | Name | Scope | Dependencies | Status |
-|---|------|-------|-------------|--------|
-| 1 | Core Block Model & Serialization Engine | `notseTypes.ts`, `markdownUtils.ts` | none | DONE |
-| 2 | Modular Editor Sub-Components | `EmojiPicker.tsx`, `TagBadge.tsx`, `SlashMenu.tsx`, `BlockItem.tsx` | M1 | IN_PROGRESS |
-| 3 | Notion Document Canvas & Notes Gallery | `NoteEditor.tsx`, `NotesGallery.tsx`, `NotesWorkspace.tsx`, `index.ts` | M2 | PLANNED |
-| 4 | ToolsManagerView & Assistant Voice Sync Integration | `ToolsManagerView.tsx`, `assistantContext.tsx` integration | M3 | PLANNED |
-| 5 | Dual-Track Testing & Build Verification | Full test suite execution, adversarial coverage, `npm run build` verification | M4 | PLANNED |
+- Web to API: `http://api:3001`
+- API or voice to agent: `http://agent:8000`
+- API or agent to PostgreSQL: `postgres:5432`
+- API or agent to Ollama: `http://local-llm:11434`
+- Graph access: `bolt://neo4j:7687`
+- Object storage: `http://minio:9000`
 
-## Interface Contracts
+## Service ownership
 
-### `app/components/notse/notseTypes.ts`
-- `BlockType = 'paragraph' | 'h1' | 'h2' | 'h3' | 'todo' | 'bullet' | 'number' | 'code' | 'callout' | 'quote' | 'divider'`
-- `NoteBlock { id: string; type: BlockType; content: string; completed?: boolean; language?: string; calloutIcon?: string; }`
-- `NoteDocument { id: string; title: string; emoji: string; blocks: NoteBlock[]; tags: string[]; createdAt: number; updatedAt: number; pinned?: boolean; }`
-- `AutoSaveStatus = 'saved' | 'saving' | 'unsaved'`
-- `NotesViewMode = 'gallery' | 'editor'`
+### Web
 
-### `app/components/notse/markdownUtils.ts`
-- `blocksToMarkdown(blocks: NoteBlock[], title?: string): string`
-- `markdownToBlocks(markdown: string): NoteBlock[]`
-- `exportNoteAsMarkdownFile(doc: NoteDocument): void`
-- `createDefaultBlock(): NoteBlock`
+- Owns the React 19 and Vite browser application.
+- Owns client-side microphone, LiveKit, HUD, canvas, local storage, and future
+  Picovoice Porcupine integration.
+- Must never receive server secrets through `VITE_*` variables.
+- Owns `app/package.json`, `app/package-lock.json`, and `app/Dockerfile`.
+- Owns the planetarium, UI-state, notes, and adversarial suites under
+  `app/tests` and `app/components/notse/__tests__`.
+- A future Next.js migration may server-render suitable pages, but microphone
+  and wake-word components will remain client-rendered.
 
-### `app/components/notse/NotesWorkspace.tsx`
-- Props: `{ initialNoteId?: string; onDiscussWithAI?: (content: string) => void; className?: string; }`
+### API
+
+- Public entry point for browser requests.
+- Owns REST routes, CORS, LiveKit token generation, provider routing, and
+  future WebSocket or message-stream endpoints.
+- Owns Node clients for PostgreSQL/pgvector, Neo4j, MinIO-compatible S3, and
+  WebSocket transport.
+- Owns `api/package.json`, `api/package-lock.json`, and `api/Dockerfile`.
+
+### Agent
+
+- Owns FastAPI, upstream Hermes orchestration, tools, Agent Reach, workflows,
+  and long-running delegated tasks.
+- Uses `api/agent/Dockerfile.agent` and `requirements.agent.txt`.
+- Has independent data clients for PostgreSQL/pgvector, Neo4j, and MinIO.
+- Future capabilities include MCP, Graphiti, workers, and telemetry emitters.
+
+### Voice
+
+- Owns realtime voice transport and turn lifecycle only.
+- Uses LiveKit Agents, Silero VAD, Groq Whisper, the realtime session model,
+  and Edge/Piper/Deepgram TTS.
+- Delegates heavy or multi-step tasks to the agent over HTTP.
+- Uses `api/agent/Dockerfile.voice` and `requirements.voice.txt`; it no longer
+  installs or runs Hermes.
+
+### PostgreSQL and pgvector
+
+- Primary transactional store for sessions, settings, notes, reminders, and
+  other durable application state.
+- Vector store for embeddings and semantic retrieval.
+- Uses one PostgreSQL container because pgvector is an extension, not a
+  separate database server.
+- Requires migrations and vector-extension initialization before application
+  persistence is considered complete.
+
+### Neo4j
+
+- Optional knowledge-graph store for entities and relationships.
+- Runs only with the Compose `extended` profile.
+- Must remain optional until a concrete graph-backed feature is connected.
+
+### MinIO
+
+- Optional S3-compatible object storage for recordings, images, documents,
+  exports, and model artifacts.
+- Runs only with the Compose `extended` profile.
+- Must remain optional until upload and retention policies are implemented.
+
+### Local LLM
+
+- Ollama runtime for local inference, embeddings, and offline fallback.
+- Model files persist in the `ollama-data` named volume.
+- The TypeScript adapter still needs conversion from its earlier custom
+  `/chat` endpoint to Ollama's `/api/chat` request and response format.
+
+## Environment ownership
+
+Environment templates live in `deploy/env`. A service receives only the
+configuration and credentials it needs.
+
+| Template | Main contents |
+|---|---|
+| `web.env.example` | Public browser configuration and Picovoice setting |
+| `api.env.example` | API runtime, origins, provider keys, LiveKit token credentials |
+| `agent.env.example` | Hermes model/runtime and agent provider keys |
+| `voice.env.example` | LiveKit, STT, session model, and TTS settings |
+| `postgres.env.example` | Database, username, and password |
+| `neo4j.env.example` | Neo4j authentication |
+| `minio.env.example` | MinIO root credentials |
+| `local-llm.env.example` | Ollama runtime limits |
+
+Real environment files are ignored by Git. Secrets must not be copied into
+Compose labels, source code, committed templates, or browser-visible values.
+
+## Dependency policy
+
+- There is no root npm workspace or root package lock.
+- Run `npm install <package>` from `app` or `api`; npm updates that service's
+  `package.json` and `package-lock.json`.
+- Docker uses `npm ci`, which fails when a manifest and lockfile disagree.
+- Python dependencies are split into agent and voice requirements files.
+- Database server images do not replace application client libraries; the
+  relevant client remains owned by the service that calls the database.
+
+## Persistence and network policy
+
+Named volumes isolate persistent state:
+
+| Volume | Data |
+|---|---|
+| `postgres-data` | Relational and vector data |
+| `neo4j-data` | Graph data |
+| `minio-data` | Object blobs |
+| `ollama-data` | Local model files |
+| `agent-reach-data` | Agent Reach state |
+| `web-node-modules` | Web container dependencies |
+| `api-node-modules` | API container dependencies |
+
+Only ports needed for development are published to the host. Production
+deployment should place a reverse proxy in front of the web and API services
+and avoid publishing database ports publicly.
+
+## Current implementation status
+
+| Area | Status | Notes |
+|---|---|---|
+| Eight Compose service definitions | Done | All share `fox-network` |
+| Independent web/API manifests and lockfiles | Done | Root workspace removed |
+| Independent agent and voice images | Done | Separate Dockerfiles and requirements |
+| Per-service environment templates | Done | Real values remain uncommitted |
+| Neo4j and MinIO optional profile | Done | Defined but not started by default |
+| PostgreSQL schema and migrations | Pending | Add migration ownership and pgvector init |
+| API data repositories | Pending | Connect installed database clients |
+| Ollama adapter | Pending | Align environment name and `/api/chat` protocol |
+| Picovoice wake word | Pending | Packages declared; browser integration remains |
+| WebSocket/message stream | Pending | Client declared; transport design remains |
+| MCP, Graphiti, and telemetry | Planned | Add only with concrete workflows |
+| Production hardening | Planned | Secrets, TLS, reverse proxy, resource limits, pinned images |
+
+## Delivery phases
+
+1. Validate the independent images and health checks without enabling optional
+   services.
+2. Add PostgreSQL migrations, pgvector initialization, and repository tests.
+3. Align the Ollama adapter and explicitly provision approved local models.
+4. Integrate browser-side Picovoice while preserving the existing wake-word
+   fallback.
+5. Add Neo4j and MinIO adapters behind feature flags, then enable the
+   `extended` profile only where required.
+6. Add message streaming and observability after service boundaries and data
+   contracts are stable.
+
+## Existing application features
+
+The container refactor does not remove the current Fox UI or tools. The React
+application still contains the holographic interface, conversations, settings,
+voice controls, notes workspace, reminders, weather, device controls, and
+planetarium-related test suites. The notes editor currently persists primarily
+through browser storage; moving that state into PostgreSQL is a separate data
+migration task.

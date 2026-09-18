@@ -2,11 +2,11 @@ FROM node:20-bookworm-slim
 
 WORKDIR /app
 
-# Copy dependency manifests
-COPY package*.json ./
+# Copy this service's independent dependency manifests.
+COPY package.json package-lock.json ./
 
 # Install Node dependencies
-RUN npm install
+RUN npm ci
 
 # Copy full application code
 COPY . .

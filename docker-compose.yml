@@ -1,74 +1,248 @@
+name: fox-jarvis
+
+x-common: &common
+  restart: unless-stopped
+  networks:
+    - fox-network
+
 services:
-  # Combined Python service: FastAPI agent (port 8000) + LiveKit voice worker.
-  # They remain separate processes so their Hermes/Python imports stay isolated.
-  voice-worker:
+  web:
+    <<: *common
+    # UI shell: React/Vite today; Next.js and Picovoice are planned capabilities.
+    labels:
+      fox.layer: web
+      fox.current-stack: "React 19, Vite, LiveKit client"
+      fox.planned-stack: "Next.js, Picovoice wake word"
     build:
-      context: ./api/agent
-      dockerfile: Dockerfile.voice
-      args:
-        HERMES_UPSTREAM_REF: ${HERMES_UPSTREAM_REF:-v2026.8.27}
-    container_name: fox-livekit-voice-worker
-    ports:
-      - "8000:8000"
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: fox-web
+    working_dir: /app
     env_file:
-      - path: ./api/.env
+      - path: ./deploy/env/web.env
         required: false
     environment:
-      - HERMES_RUNTIME=auto
-      - HERMES_UPSTREAM_PATH=/opt/hermes-agent
-      - VOICE_TTS_PROVIDER=edge
-      - FASTAPI_PORT=8000
-      # Heavy work is delegated to the FastAPI process in this same container.
-      - HERMES_FASTAPI_URL=http://127.0.0.1:8000
-      # Flip to "true" to instead run the full upstream Hermes runtime inside
-      # this worker (needs a large per-minute token budget, e.g. Groq Dev tier
-      # or a non-Groq HERMES_BASE_URL). The settings below only apply then.
-      - VOICE_USE_INPROCESS_HERMES=false
-      - HERMES_ENABLED_TOOLSETS=web
-      - HERMES_MAX_ITERATIONS=3
-      - HERMES_SKIP_MEMORY=true
-      - HERMES_SKIP_CONTEXT_FILES=true
+      VITE_PROXY_TARGET: http://api:3001
+    ports:
+      - "${WEB_PORT:-3000}:3000"
     volumes:
-      - ./api/agent/tts/piper_models:/app/tts/piper_models
-    restart: unless-stopped
+      - ./app:/app
+      - web-node-modules:/app/node_modules
+    depends_on:
+      api:
+        condition: service_healthy
 
-  # Node.js / Express API server (port 3001)
   api:
+    <<: *common
+    # Public boundary for REST, WebSocket/streaming, auth and service routing.
+    labels:
+      fox.layer: api
+      fox.current-stack: "Node.js, Express, REST, LiveKit token gateway"
+      fox.planned-stack: "WebSocket, message stream, OpenTelemetry"
     build:
       context: ./api
       dockerfile: Dockerfile
-    container_name: fox-jarvis-api
-    ports:
-      - "3001:3001"
-    environment:
-      - PORT=3001
-      - NODE_ENV=development
-      - HERMES_FASTAPI_URL=http://voice-worker:8000
-      - WAKEWORD_ENABLED=false
+    container_name: fox-api
     env_file:
-      - path: ./api/.env
+      - path: ./deploy/env/api.env
         required: false
+    environment:
+      PORT: "3001"
+      NODE_ENV: ${NODE_ENV:-development}
+      HERMES_FASTAPI_URL: http://agent:8000
+      LOCAL_LLM_BASE_URL: http://local-llm:11434
+      DATABASE_URL: postgresql://${POSTGRES_USER:-fox}:${POSTGRES_PASSWORD:-fox-dev-only}@postgres:5432/${POSTGRES_DB:-fox}
+    ports:
+      - "${API_PORT:-3001}:3001"
     volumes:
       - ./api:/app
-      - /app/node_modules
+      - api-node-modules:/app/node_modules
     depends_on:
-      - voice-worker
-    restart: unless-stopped
+      agent:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
-  # React / Vite frontend (port 3000). Talks to the API through Vite's `/api`
-  # proxy; inside Compose the proxy target is the `api` service, not localhost.
-  app:
-    image: node:22-alpine
-    container_name: fox-jarvis-app
-    working_dir: /app
-    command: sh -c "npm install && npm run dev -- --host --port 3000"
-    ports:
-      - "3000:3000"
+  agent:
+    <<: *common
+    # Reasoning/orchestration: Hermes, tools, workflows and worker delegation.
+    labels:
+      fox.layer: agent
+      fox.current-stack: "FastAPI, Hermes, Agent Reach, tool registry"
+      fox.planned-stack: "MCP, workflows, Graphiti, telemetry emitters"
+    build:
+      context: ./api/agent
+      dockerfile: Dockerfile.agent
+      args:
+        HERMES_UPSTREAM_REF: ${HERMES_UPSTREAM_REF:-v2026.8.27}
+    container_name: fox-agent
+    env_file:
+      - path: ./deploy/env/agent.env
+        required: false
     environment:
-      - VITE_PROXY_TARGET=http://api:3001
+      FASTAPI_PORT: "8000"
+      HERMES_UPSTREAM_PATH: /opt/hermes-agent
+      LOCAL_LLM_BASE_URL: http://local-llm:11434
+      DATABASE_URL: postgresql://${POSTGRES_USER:-fox}:${POSTGRES_PASSWORD:-fox-dev-only}@postgres:5432/${POSTGRES_DB:-fox}
+    ports:
+      - "${AGENT_PORT:-8000}:8000"
     volumes:
-      - ./app:/app
-      - /app/node_modules
+      - agent-reach-data:/root/.agent-reach
     depends_on:
-      - api
-    restart: unless-stopped
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  voice:
+    <<: *common
+    # Realtime ears/mouth: LiveKit transport, STT, TTS and turn detection.
+    labels:
+      fox.layer: voice
+      fox.current-stack: "LiveKit Agents, Groq Whisper, Edge/Piper/Deepgram TTS"
+      fox.planned-stack: "additional local and cloud voice providers"
+    build:
+      context: ./api/agent
+      dockerfile: Dockerfile.voice
+    container_name: fox-voice
+    env_file:
+      - path: ./deploy/env/voice.env
+        required: false
+    environment:
+      HERMES_FASTAPI_URL: http://agent:8000
+      VOICE_TTS_PROVIDER: ${VOICE_TTS_PROVIDER:-edge}
+    volumes:
+      - ./api/agent/tts/piper_models:/app/tts/piper_models:ro
+    depends_on:
+      agent:
+        condition: service_healthy
+
+  postgres:
+    <<: *common
+    # Transactional application data plus vector embeddings/search.
+    labels:
+      fox.layer: data
+      fox.current-stack: "PostgreSQL 16, pgvector"
+      fox.use-cases: "relational data, sessions, memory, vector search"
+    image: pgvector/pgvector:pg16
+    container_name: fox-postgres
+    env_file:
+      - path: ./deploy/env/postgres.env
+        required: false
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-fox}
+      POSTGRES_USER: ${POSTGRES_USER:-fox}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fox-dev-only}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  neo4j:
+    <<: *common
+    # Optional knowledge graph; defined now but disabled by default.
+    labels:
+      fox.layer: data
+      fox.current-stack: "Neo4j Community"
+      fox.use-cases: "entities, relationships, knowledge graph"
+    image: neo4j:5-community
+    container_name: fox-neo4j
+    profiles: ["extended"]
+    env_file:
+      - path: ./deploy/env/neo4j.env
+        required: false
+    environment:
+      NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/fox-dev-only}
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:7474 >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  minio:
+    <<: *common
+    # Optional S3-compatible storage; defined now but disabled by default.
+    labels:
+      fox.layer: data
+      fox.current-stack: "MinIO"
+      fox.use-cases: "audio, documents, images, model artifacts"
+    image: minio/minio:latest
+    container_name: fox-minio
+    profiles: ["extended"]
+    command: server /data --console-address ":9001"
+    env_file:
+      - path: ./deploy/env/minio.env
+        required: false
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-foxadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-fox-dev-only}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  local-llm:
+    <<: *common
+    # Local inference endpoint for small/open models and offline operation.
+    labels:
+      fox.layer: model-runtime
+      fox.current-stack: "Ollama"
+      fox.use-cases: "local LLM inference, embeddings, offline fallback"
+    image: ollama/ollama:latest
+    container_name: fox-local-llm
+    env_file:
+      - path: ./deploy/env/local-llm.env
+        required: false
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    ports:
+      - "${LOCAL_LLM_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+networks:
+  fox-network:
+    name: fox-network
+    driver: bridge
+
+volumes:
+  web-node-modules:
+  api-node-modules:
+  agent-reach-data:
+  postgres-data:
+  neo4j-data:
+  minio-data:
+  ollama-data:

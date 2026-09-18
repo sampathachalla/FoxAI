@@ -11,7 +11,7 @@ git clone --depth 1 --branch "${AGENT_REACH_REF}" "${AGENT_REACH_REPO}" "${AGENT
 uv pip install --system -e "${AGENT_REACH_PATH}"
 
 # Agent Reach's Exa search backend uses mcporter. Keep this setup inside the
-# integration installer so Dockerfile.voice does not know backend details.
+# integration installer so Dockerfile.agent does not know backend details.
 npm install -g mcporter
 mcporter config add exa https://mcp.exa.ai/mcp
 

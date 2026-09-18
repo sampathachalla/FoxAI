@@ -13,7 +13,7 @@ import {
   PLANET_VISUAL_RADII,
   RELATIVE_ORBITAL_SPEEDS,
   getCelestialBody,
-} from '../app/components/Planetarium/PlanetaryData.ts';
+} from '../components/Planetarium/PlanetaryData.ts';
 
 import {
   hexToRgb,
@@ -32,7 +32,7 @@ import {
   renderPlanetLabel,
   type ProjectedBodyItem,
   type Point3D,
-} from '../app/components/Planetarium/SolarShaders.ts';
+} from '../components/Planetarium/SolarShaders.ts';
 
 // Mock Canvas 2D Rendering Context
 function createMockCanvasContext(): CanvasRenderingContext2D {

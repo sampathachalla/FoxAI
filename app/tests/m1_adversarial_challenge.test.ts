@@ -21,14 +21,14 @@ import {
   isValidCelestialId,
   RELATIVE_ORBITAL_SPEEDS,
   PLANET_VISUAL_RADII,
-} from '../app/components/Planetarium/PlanetaryData.ts';
+} from '../components/Planetarium/PlanetaryData.ts';
 
 import {
   StorageService,
   STORAGE_KEYS,
-} from '../app/services/storage.ts';
+} from '../services/storage.ts';
 
-import type { CelestialId, CelestialType, AppMode } from '../app/types/index.ts';
+import type { CelestialId, CelestialType, AppMode } from '../types/index.ts';
 
 // In-memory mock localStorage for storage testing
 class MockLocalStorage implements Storage {

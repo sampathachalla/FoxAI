@@ -18,18 +18,18 @@ npm test
 Or execute directly with Node.js:
 
 ```bash
-node --experimental-strip-types tests/runner.ts
+node --experimental-strip-types app/tests/runner.ts
 ```
 
 Individual test tiers can also be run independently:
 
 ```bash
-node --experimental-strip-types --test tests/tier1_features.test.ts
-node --experimental-strip-types --test tests/tier2_boundary.test.ts
-node --experimental-strip-types --test tests/tier3_combinations.test.ts
-node --experimental-strip-types --test tests/tier4_real_world.test.ts
-node --experimental-strip-types --test tests/tier5_adversarial_planetarium_stress.test.ts
-node --experimental-strip-types --test tests/tier6_empirical_math_perf_stress.test.ts
+node --experimental-strip-types --test app/tests/tier1_features.test.ts
+node --experimental-strip-types --test app/tests/tier2_boundary.test.ts
+node --experimental-strip-types --test app/tests/tier3_combinations.test.ts
+node --experimental-strip-types --test app/tests/tier4_real_world.test.ts
+node --experimental-strip-types --test app/tests/tier5_adversarial_planetarium_stress.test.ts
+node --experimental-strip-types --test app/tests/tier6_empirical_math_perf_stress.test.ts
 ```
 
 ---
@@ -40,13 +40,13 @@ The test suite is structured into 4 primary requirement tiers plus adversarial a
 
 | Tier | Focus | Test Suite File | Test Count | Status |
 |---|---|---|:---:|:---:|
-| **Tier 1** | Feature Coverage (16 Features × 5 Tests each) | `tests/tier1_features.test.ts` | **80** | **PASS** |
-| **Tier 2** | Boundary & Corner Cases (Pitch clamping, zoom limits, Pluto 17.16° tilt, Saturn rings, raycast tolerance, storage corruption) | `tests/tier2_boundary.test.ts` | **40** | **PASS** |
-| **Tier 3** | Cross-Feature Combinations (Mode switching, audio reactivity, camera momentum, focus lerp, speed multipliers) | `tests/tier3_combinations.test.ts` | **36** | **PASS** |
-| **Tier 4** | Real-World Application Workloads (Grand Tour, inspection, speech pulses, drag exploration, cold-start persistence) | `tests/tier4_real_world.test.ts` | **5** | **PASS** |
-| **Tier 5** | Adversarial Navigation, State Sync & Storage Stress Harness | `tests/tier5_adversarial_planetarium_stress.test.ts` | **14** | **PASS** |
-| **Tier 6** | Empirical 3D Math, Orbital Mechanics & 60 FPS Performance | `tests/tier6_empirical_math_perf_stress.test.ts` | **10** | **PASS** |
-| **Total** | **All 6 Test Suites** | `tests/runner.ts` | **185** | **100% PASS** |
+| **Tier 1** | Feature Coverage (16 Features × 5 Tests each) | `app/tests/tier1_features.test.ts` | **80** | **PASS** |
+| **Tier 2** | Boundary & Corner Cases (Pitch clamping, zoom limits, Pluto 17.16° tilt, Saturn rings, raycast tolerance, storage corruption) | `app/tests/tier2_boundary.test.ts` | **40** | **PASS** |
+| **Tier 3** | Cross-Feature Combinations (Mode switching, audio reactivity, camera momentum, focus lerp, speed multipliers) | `app/tests/tier3_combinations.test.ts` | **36** | **PASS** |
+| **Tier 4** | Real-World Application Workloads (Grand Tour, inspection, speech pulses, drag exploration, cold-start persistence) | `app/tests/tier4_real_world.test.ts` | **5** | **PASS** |
+| **Tier 5** | Adversarial Navigation, State Sync & Storage Stress Harness | `app/tests/tier5_adversarial_planetarium_stress.test.ts` | **14** | **PASS** |
+| **Tier 6** | Empirical 3D Math, Orbital Mechanics & 60 FPS Performance | `app/tests/tier6_empirical_math_perf_stress.test.ts` | **10** | **PASS** |
+| **Total** | **All 6 Test Suites** | `app/tests/runner.ts` | **185** | **100% PASS** |
 
 ---
 
@@ -75,14 +75,14 @@ The test suite is structured into 4 primary requirement tiers plus adversarial a
 
 ## 4. Test File Manifest
 
-- `tests/harness/types.ts`: Interface contracts, type definitions (`CelestialId`, `CelestialBodyData`, `AppMode`), scientific constants for Sun + 9 planets, and validation helpers.
-- `tests/harness/domMock.ts`: High-fidelity DOM, `LocalStorage`, `CanvasRenderingContext2D`, and Web Audio API mock harness.
-- `tests/harness/planetariumEngine.ts`: Keplerian orbital mechanics ($R \propto \text{AU}^{0.5}$), Euler 3D camera matrices, Saturn 3D ring occlusion shader math, screen-space raycasting hit detection, and momentum physics.
-- `tests/harness/stateEngine.ts`: Reactive state synchronization for `AssistantContext`, mode routing, and `MockStorageService` with error handling.
-- `tests/tier1_features.test.ts`: 80 automated tests providing $\ge 5$ explicit assertions per feature across all 16 features.
-- `tests/tier2_boundary.test.ts`: 40 automated tests for camera pitch clamping $[-85^\circ, +85^\circ]$, zoom bounds $[120\text{px}, 1600\text{px}]$, zero/overflow audio, Pluto $17.16^\circ$ inclination, Saturn ring depth horizon, raycasting precision, and storage corruption fallbacks.
-- `tests/tier3_combinations.test.ts`: 36 cross-feature pairwise and multi-feature interaction tests.
-- `tests/tier4_real_world.test.ts`: 5 comprehensive real-world end-to-end application scenarios (Grand Tour, inspection, speech pulse, drag momentum, and cold start persistence).
-- `tests/tier5_adversarial_planetarium_stress.test.ts`: 14 adversarial stress tests covering 1,000 rapid switches, QuotaExceededError, SecurityError, and prototype pollution injection.
-- `tests/tier6_empirical_math_perf_stress.test.ts`: 10 empirical tests validating $>500$ FPS simulation throughput, singularity-free coordinate projections, and $<2.0\text{ms}$ frame time.
-- `tests/runner.ts`: Unified test runner with structured output, timing diagnostics, and tier pass status.
+- `app/tests/harness/types.ts`: Interface contracts, type definitions (`CelestialId`, `CelestialBodyData`, `AppMode`), scientific constants for Sun + 9 planets, and validation helpers.
+- `app/tests/harness/domMock.ts`: High-fidelity DOM, `LocalStorage`, `CanvasRenderingContext2D`, and Web Audio API mock harness.
+- `app/tests/harness/planetariumEngine.ts`: Keplerian orbital mechanics ($R \propto \text{AU}^{0.5}$), Euler 3D camera matrices, Saturn 3D ring occlusion shader math, screen-space raycasting hit detection, and momentum physics.
+- `app/tests/harness/stateEngine.ts`: Reactive state synchronization for `AssistantContext`, mode routing, and `MockStorageService` with error handling.
+- `app/tests/tier1_features.test.ts`: 80 automated tests providing $\ge 5$ explicit assertions per feature across all 16 features.
+- `app/tests/tier2_boundary.test.ts`: 40 automated tests for camera pitch clamping $[-85^\circ, +85^\circ]$, zoom bounds $[120\text{px}, 1600\text{px}]$, zero/overflow audio, Pluto $17.16^\circ$ inclination, Saturn ring depth horizon, raycasting precision, and storage corruption fallbacks.
+- `app/tests/tier3_combinations.test.ts`: 36 cross-feature pairwise and multi-feature interaction tests.
+- `app/tests/tier4_real_world.test.ts`: 5 comprehensive real-world end-to-end application scenarios (Grand Tour, inspection, speech pulse, drag momentum, and cold start persistence).
+- `app/tests/tier5_adversarial_planetarium_stress.test.ts`: 14 adversarial stress tests covering 1,000 rapid switches, QuotaExceededError, SecurityError, and prototype pollution injection.
+- `app/tests/tier6_empirical_math_perf_stress.test.ts`: 10 empirical tests validating $>500$ FPS simulation throughput, singularity-free coordinate projections, and $<2.0\text{ms}$ frame time.
+- `app/tests/runner.ts`: Unified test runner with structured output, timing diagnostics, and tier pass status.

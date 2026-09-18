@@ -16,6 +16,8 @@ venv/
 .env*
 api/.env
 api/.env*
-!.env.example
 !api/.env.example
+!deploy/
+!deploy/env/
+!deploy/env/*.env.example
 .agents/

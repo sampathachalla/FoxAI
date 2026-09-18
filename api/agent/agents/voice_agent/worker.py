@@ -53,9 +53,9 @@ FIRST_PHRASE_MAX_CHARS = int(os.getenv("VOICE_TTS_FIRST_PHRASE_MAX_CHARS", "96")
 PHRASE_MIN_CHARS = int(os.getenv("VOICE_TTS_PHRASE_MIN_CHARS", "44"))
 PHRASE_MAX_CHARS = int(os.getenv("VOICE_TTS_PHRASE_MAX_CHARS", "180"))
 
-# The heavy FastAPI agent (backed by upstream Hermes) runs as a separate
-# process in this same container. Keeping the HTTP boundary prevents
-# long-running work from blocking voice turns.
+# The heavy FastAPI agent (backed by upstream Hermes) runs in its own
+# container. Keeping the HTTP boundary prevents long-running work from
+# blocking voice turns and keeps both services independently deployable.
 PYTHON_AGENT_URL = os.getenv("HERMES_FASTAPI_URL", "http://127.0.0.1:8000").rstrip("/")
 DELEGATE_TIMEOUT_S = float(os.getenv("VOICE_DELEGATE_TIMEOUT_S", "180"))
 DELEGATE_SPOKEN_CHARS = int(os.getenv("VOICE_DELEGATE_SPOKEN_CHARS", "700"))

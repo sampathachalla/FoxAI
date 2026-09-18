@@ -14,7 +14,7 @@ import {
   type SlashMenuItemDef,
   type AutoSaveStatus,
   type NotesViewMode,
-} from '../app/components/notse/notseTypes.ts';
+} from '../components/notse/notseTypes.ts';
 
 import {
   generateBlockId,
@@ -28,7 +28,7 @@ import {
   duplicateDocument,
   exportNoteAsMarkdownFile,
   copyNoteAsMarkdown,
-} from '../app/components/notse/markdownUtils.ts';
+} from '../components/notse/markdownUtils.ts';
 
 describe('Milestone 1: notseTypes & SLASH_COMMANDS', () => {
   const ALL_BLOCK_TYPES: BlockType[] = [

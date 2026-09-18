@@ -36,7 +36,7 @@ Hermes tool callbacks are inspected through `runtime.py`. When Agent Reach activ
 
 ## Version
 
-`Dockerfile.voice` supplies `AGENT_REACH_REF` to `install.sh`. Keep the ref pinned and test upgrades before changing it.
+`Dockerfile.agent` supplies `AGENT_REACH_REF` to `install.sh`. Keep the ref pinned and test upgrades before changing it.
 
 ## Runtime flag
 

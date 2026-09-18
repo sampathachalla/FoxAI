@@ -31,7 +31,7 @@ import {
   type Point3D,
   type ProjectedBodyItem,
   type SolarFlareParams,
-} from '../app/components/Planetarium/SolarShaders.ts';
+} from '../components/Planetarium/SolarShaders.ts';
 
 import {
   CELESTIAL_BODIES,
@@ -40,9 +40,9 @@ import {
   RELATIVE_ORBITAL_SPEEDS,
   PLANETARY_DATA,
   getCelestialBody,
-} from '../app/components/Planetarium/PlanetaryData.ts';
+} from '../components/Planetarium/PlanetaryData.ts';
 
-import type { CelestialBodyData, CelestialId } from '../app/types/index.ts';
+import type { CelestialBodyData, CelestialId } from '../types/index.ts';
 
 // ---------------------------------------------------------------------------
 // Canvas 2D Rendering Context Mock for Node.js Empirical Execution

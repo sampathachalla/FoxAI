@@ -16,7 +16,7 @@ import {
   CELESTIAL_BODY_MAP,
   PLANETARY_DATA,
   getCelestialBody,
-} from '../app/components/Planetarium/PlanetaryData.ts';
+} from '../components/Planetarium/PlanetaryData.ts';
 import {
   computeSolarFlareParams,
   computeSaturnRingSegments,
@@ -26,7 +26,7 @@ import {
   proceduralTurbulence,
   type Point3D,
   type ProjectedBodyItem,
-} from '../app/components/Planetarium/SolarShaders.ts';
+} from '../components/Planetarium/SolarShaders.ts';
 import {
   type AppMode,
   type CelestialId,

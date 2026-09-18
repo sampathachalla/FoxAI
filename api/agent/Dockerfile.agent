@@ -1,0 +1,33 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ARG HERMES_UPSTREAM_REF=v2026.8.27
+ARG AGENT_REACH_REF=v1.5.0
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git curl nodejs npm \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir uv \
+    && git clone --depth 1 --branch "${HERMES_UPSTREAM_REF}" https://github.com/NousResearch/hermes-agent.git /opt/hermes-agent \
+    && uv pip install --system -e "/opt/hermes-agent[edge-tts]"
+
+ENV HERMES_UPSTREAM_PATH=/opt/hermes-agent \
+    HERMES_RUNTIME=auto \
+    AGENT_REACH_HOME=/root/.agent-reach \
+    AGENT_REACH_ENABLED=true
+
+COPY integrations/agent_reach/install.sh /tmp/install-agent-reach.sh
+RUN chmod +x /tmp/install-agent-reach.sh \
+    && AGENT_REACH_REF="${AGENT_REACH_REF}" /tmp/install-agent-reach.sh \
+    && rm /tmp/install-agent-reach.sh
+
+COPY requirements.agent.txt ./
+RUN uv pip install --system -r requirements.agent.txt
+
+COPY . .
+RUN mkdir -p tts/piper_models /root/.agent-reach
+
+EXPOSE 8000
+
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

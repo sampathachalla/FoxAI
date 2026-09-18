@@ -13,9 +13,9 @@ import {
   CELESTIAL_BODY_MAP,
   getCelestialBody,
   isValidCelestialId,
-} from '../app/components/Planetarium/PlanetaryData.ts';
-import type { CelestialId, CelestialBodyData, AppMode } from '../app/types/index.ts';
-import { StorageService, STORAGE_KEYS } from '../app/services/storage.ts';
+} from '../components/Planetarium/PlanetaryData.ts';
+import type { CelestialId, CelestialBodyData, AppMode } from '../types/index.ts';
+import { StorageService, STORAGE_KEYS } from '../services/storage.ts';
 
 // Mock localStorage for storage testing
 class LocalStorageMock {

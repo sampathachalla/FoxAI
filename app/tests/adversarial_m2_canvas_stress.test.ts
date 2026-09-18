@@ -16,7 +16,7 @@ import {
   CELESTIAL_BODY_MAP,
   PLANET_VISUAL_RADII,
   getCelestialBody,
-} from '../app/components/Planetarium/PlanetaryData.ts';
+} from '../components/Planetarium/PlanetaryData.ts';
 
 import {
   computeSaturnRingSegments,
@@ -33,7 +33,7 @@ import {
   renderOrbitalTrack,
   renderPlanetLabel,
   renderCelestialSelectionReticle,
-} from '../app/components/Planetarium/SolarShaders.ts';
+} from '../components/Planetarium/SolarShaders.ts';
 
 import {
   PlanetariumEngine,

@@ -9,10 +9,11 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
+const testRoot = dirname(fileURLToPath(import.meta.url));
 const testFiles = [
-  'app/components/notse/__tests__/markdownUtils.test.ts',
-  'app/components/notse/__tests__/notseEngine.test.ts',
-];
+  'markdownUtils.test.ts',
+  'notseEngine.test.ts',
+].map((file) => resolve(testRoot, file));
 
 console.log('================================================================================');
 console.log('  📝 Fox AI Notion-Feel Notes Tool — Comprehensive Test Suite');

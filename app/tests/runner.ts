@@ -5,19 +5,22 @@
  */
 
 import { spawn } from 'node:child_process';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+const testRoot = dirname(fileURLToPath(import.meta.url));
 const testFiles = [
-  'tests/tier1_features.test.ts',
-  'tests/tier2_boundary.test.ts',
-  'tests/tier3_combinations.test.ts',
-  'tests/tier4_real_world.test.ts',
-  'tests/tier5_adversarial_planetarium_stress.test.ts',
-  'tests/tier6_empirical_math_perf_stress.test.ts',
-  'tests/adversarial_m2_canvas_stress.test.ts',
-  'tests/adversarial_m3_ui_state_stress.test.ts',
-  'tests/empirical_challenger_m3_2.ts',
-  'tests/adversarial_m3_stress_harness.test.ts',
-];
+  'tier1_features.test.ts',
+  'tier2_boundary.test.ts',
+  'tier3_combinations.test.ts',
+  'tier4_real_world.test.ts',
+  'tier5_adversarial_planetarium_stress.test.ts',
+  'tier6_empirical_math_perf_stress.test.ts',
+  'adversarial_m2_canvas_stress.test.ts',
+  'adversarial_m3_ui_state_stress.test.ts',
+  'empirical_challenger_m3_2.ts',
+  'adversarial_m3_stress_harness.test.ts',
+].map((file) => resolve(testRoot, file));
 
 console.log('================================================================================');
 console.log('  🌌 Fox AI 3D Planetarium Mode Comprehensive E2E Test Suite');

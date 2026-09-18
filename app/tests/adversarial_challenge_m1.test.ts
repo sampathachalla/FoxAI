@@ -6,7 +6,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { BlockType, NoteBlock, NoteDocument } from '../app/components/notse/notseTypes.ts';
+import type { BlockType, NoteBlock, NoteDocument } from '../components/notse/notseTypes.ts';
 import {
   blocksToMarkdown,
   markdownToBlocks,
@@ -15,7 +15,7 @@ import {
   extractDocumentSnippet,
   calculateDocumentStats,
   duplicateDocument,
-} from '../app/components/notse/markdownUtils.ts';
+} from '../components/notse/markdownUtils.ts';
 
 describe('Adversarial Challenge M1 Test Suite', () => {
 

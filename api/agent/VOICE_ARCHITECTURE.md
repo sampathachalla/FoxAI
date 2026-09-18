@@ -2,7 +2,7 @@
 
 The realtime voice path is isolated from the existing browser/REST voice path. `VITE_LIVEKIT_VOICE_ENABLED=false` keeps the previous behavior, while the optional LiveKit worker enables the new low-latency pipeline.
 
-The voice worker is a **LiveKit Agent** — pure realtime transport (VAD, STT, turn detection, TTS). It carries no Hermes dependency and answers conversational turns directly with its own Groq LLM. FoxAI's real orchestrator, upstream **Nous Research Hermes**, lives in the separate FastAPI agent process (`server/routes/agent.py`) that runs alongside the voice worker in the same container. The voice agent reaches Hermes only indirectly, by handing heavier tasks to that FastAPI agent through the `delegate_to_worker_agent` tool.
+The voice worker is a **LiveKit Agent** — pure realtime transport (VAD, STT, turn detection, TTS). It carries no Hermes dependency and answers conversational turns directly with its own Groq LLM. FoxAI's real orchestrator, upstream **Nous Research Hermes**, lives in a separate FastAPI agent container (`server/routes/agent.py`). The voice agent reaches Hermes only indirectly, by handing heavier tasks to that FastAPI service through the `delegate_to_worker_agent` tool.
 
 ## Runtime flow
 
@@ -59,7 +59,7 @@ Edge    Piper    Deepgram
 
 For anything heavier than a quick spoken reply — drafting, research with sources, code, multi-step tasks — the voice agent calls the `delegate_to_worker_agent` tool, which posts the task to the FastAPI agent's `POST /agent/run` over HTTP (`HERMES_FASTAPI_URL`, default `http://127.0.0.1:8000`) and speaks the result back once it's ready. That FastAPI agent is FoxAI's one real orchestrator boundary: it prefers the official `NousResearch/hermes-agent` `AIAgent` (see `agents/hermes_orchestrator.py`), falling back to FoxAI's own unbranded `FoxLocalAgent` only if upstream Hermes can't load.
 
-The container clones the official Hermes checkout at build time (`Dockerfile.voice`, pinned via `HERMES_UPSTREAM_REF`) so it's available to the FastAPI process. See `agents/hermes_bootstrap.py` for how that checkout is given priority over FoxAI's own same-named `tools`/`toolsets` packages, and `agents/hermes_orchestrator.py` for the shared configuration (`HERMES_MODEL`, `HERMES_BASE_URL`, `HERMES_API_KEY`/`GROQ_API_KEY`, toolset allow/deny lists). Upstream Hermes only loads in-process when `VOICE_USE_INPROCESS_HERMES=true` — otherwise the FastAPI agent falls back to `FoxLocalAgent`.
+The agent container clones the official Hermes checkout at build time (`Dockerfile.agent`, pinned via `HERMES_UPSTREAM_REF`) so it is available to FastAPI. See `agents/hermes_bootstrap.py` for how that checkout is given priority over FoxAI's own same-named `tools`/`toolsets` packages, and `agents/hermes_orchestrator.py` for the shared configuration (`HERMES_MODEL`, `HERMES_BASE_URL`, `HERMES_API_KEY`/`GROQ_API_KEY`, toolset allow/deny lists). The FastAPI agent falls back to `FoxLocalAgent` if upstream Hermes cannot load.
 
 ## Frontend TTS provider switching
 
@@ -90,7 +90,7 @@ VOICE_LLM_MODEL=openai/gpt-oss-20b
 VOICE_TTS_PROVIDER=edge
 ```
 
-Required for the FastAPI agent's Hermes delegation path (same container):
+Required for the separate FastAPI agent container's Hermes delegation path:
 
 ```env
 HERMES_UPSTREAM_REF=v2026.8.27
@@ -108,9 +108,9 @@ VOICE_TTS_PHRASE_MIN_CHARS=48
 VOICE_TTS_PHRASE_MAX_CHARS=180
 ```
 
-## Run the combined agent and realtime worker
+## Run the independent agent and realtime worker
 
-Docker Compose starts the FastAPI agent and LiveKit worker together in one container:
+Docker Compose starts the FastAPI agent and LiveKit worker as separate containers on the shared network:
 
 ```bash
 docker compose up --build
