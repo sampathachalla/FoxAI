@@ -7,7 +7,7 @@ type RealtimeTtsProvider = 'deepgram' | 'edge' | 'piper';
 
 function normalizeTtsProvider(value: unknown): RealtimeTtsProvider {
   if (value === 'deepgram') return 'deepgram';
-  if (value === 'hermes-piper' || value === 'piper') return 'piper';
+  if (value === 'voice-piper' || value === 'piper') return 'piper';
   // Edge is the safe/default realtime voice provider. Browser/auto selections
   // also land here so the worker never receives an unsupported provider name.
   return 'edge';

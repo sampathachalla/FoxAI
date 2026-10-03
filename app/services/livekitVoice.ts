@@ -37,16 +37,16 @@ export function toLiveKitTtsConfig(voicePrefs?: VoicePreference): LiveKitTtsConf
     };
   }
 
-  if (provider === 'hermes-piper') {
+  if (provider === 'voice-piper') {
     return {
       provider: 'piper',
-      voice: voicePrefs.hermesPiperVoice || '',
+      voice: voicePrefs.piperVoice || '',
     };
   }
 
   return {
     provider: 'edge',
-    voice: voicePrefs?.hermesEdgeVoice || '',
+    voice: voicePrefs?.edgeVoice || '',
   };
 }
 

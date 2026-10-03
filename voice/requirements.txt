@@ -1,0 +1,13 @@
+aiohttp>=3.10.0
+python-dotenv>=1.0.0
+edge-tts>=6.1.9
+piper-tts>=1.2.0
+
+livekit-agents~=1.5
+livekit-plugins-silero~=1.5
+livekit-plugins-groq~=1.5
+livekit-plugins-deepgram~=1.5
+
+# OpenTelemetry (traces, metrics, logs -> observability container)
+opentelemetry-distro
+opentelemetry-exporter-otlp-proto-http

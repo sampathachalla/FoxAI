@@ -29,7 +29,7 @@ import {
   fetchDetectTools,
   fetchDeepgramTTS,
   fetchDeepgramVoices,
-  fetchHermesTTS,
+  fetchVoiceTTS,
   fetchSystemStatus,
 } from '../services/api';
 import { WakeWordStreamService } from '../services/wakeWord';
@@ -637,23 +637,23 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       // Determine which cloud/local audio-synthesis engine to use, or fall back to browser Web Speech API
       const provider = voicePrefsRef.current.provider;
-      const isHermesEdge = provider === 'hermes-edge';
-      const isHermesPiper = provider === 'hermes-piper';
+      const isVoiceEdge = provider === 'voice-edge';
+      const isVoicePiper = provider === 'voice-piper';
       const shouldUseDeepgram =
-        (provider === 'deepgram' || (provider !== 'webspeech' && !isHermesEdge && !isHermesPiper && hasDeepgramKey)) &&
+        (provider === 'deepgram' || (provider !== 'webspeech' && !isVoiceEdge && !isVoicePiper && hasDeepgramKey)) &&
         hasDeepgramKey;
 
-      if (shouldUseDeepgram || isHermesEdge || isHermesPiper) {
+      if (shouldUseDeepgram || isVoiceEdge || isVoicePiper) {
         setIsSynthesizingTTS(true);
-        const engineLabel = shouldUseDeepgram ? 'Deepgram TTS' : 'Hermes TTS';
+        const engineLabel = shouldUseDeepgram ? 'Deepgram TTS' : 'Voice TTS';
 
         try {
           const audioBlob = shouldUseDeepgram
             ? await fetchDeepgramTTS(text, voicePrefsRef.current.deepgramVoice || 'aura-2-asteria-en')
-            : await fetchHermesTTS(
+            : await fetchVoiceTTS(
                 text,
-                isHermesPiper ? 'piper' : 'edge',
-                isHermesPiper ? voicePrefsRef.current.hermesPiperVoice : voicePrefsRef.current.hermesEdgeVoice
+                isVoicePiper ? 'piper' : 'edge',
+                isVoicePiper ? voicePrefsRef.current.piperVoice : voicePrefsRef.current.edgeVoice
               );
           setIsSynthesizingTTS(false);
 
@@ -717,13 +717,13 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const synthesizeSentenceAudio = useCallback(
     async (text: string): Promise<Blob | null> => {
       const provider = voicePrefsRef.current.provider;
-      const isHermesEdge = provider === 'hermes-edge';
-      const isHermesPiper = provider === 'hermes-piper';
+      const isVoiceEdge = provider === 'voice-edge';
+      const isVoicePiper = provider === 'voice-piper';
       const shouldUseDeepgram =
-        (provider === 'deepgram' || (provider !== 'webspeech' && !isHermesEdge && !isHermesPiper && hasDeepgramKey)) &&
+        (provider === 'deepgram' || (provider !== 'webspeech' && !isVoiceEdge && !isVoicePiper && hasDeepgramKey)) &&
         hasDeepgramKey;
 
-      if (!shouldUseDeepgram && !isHermesEdge && !isHermesPiper) {
+      if (!shouldUseDeepgram && !isVoiceEdge && !isVoicePiper) {
         return null;
       }
 
@@ -731,10 +731,10 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         if (shouldUseDeepgram) {
           return await fetchDeepgramTTS(text, voicePrefsRef.current.deepgramVoice || 'aura-2-asteria-en');
         }
-        return await fetchHermesTTS(
+        return await fetchVoiceTTS(
           text,
-          isHermesPiper ? 'piper' : 'edge',
-          isHermesPiper ? voicePrefsRef.current.hermesPiperVoice : voicePrefsRef.current.hermesEdgeVoice
+          isVoicePiper ? 'piper' : 'edge',
+          isVoicePiper ? voicePrefsRef.current.piperVoice : voicePrefsRef.current.edgeVoice
         );
       } catch (err) {
         console.warn('[Streaming TTS] Sentence synthesis failed, falling back to Web Speech:', err);

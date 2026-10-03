@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
-import { fetchHermesTTSVoices } from '../services/api';
+import { fetchVoiceTTSVoices } from '../services/api';
 import { ACCENT_THEMES } from '../utils/formatters';
 import { SettingsTab, EnginePreferences, HeaderQuickOptionId, CoreShapeId, CORE_SHAPES } from '../types';
 import { ALL_QUICK_OPTIONS } from './QuickAccessPanel';
@@ -104,39 +104,39 @@ export const SettingsView: React.FC = () => {
 
   const [deepgramFamilyFilter, setDeepgramFamilyFilter] = useState<'Aura-2' | 'Aura-1'>('Aura-2');
 
-  const [hermesVoices, setHermesVoices] = useState<any[]>([]);
-  const [hermesVoicesLoading, setHermesVoicesLoading] = useState(false);
-  const [hermesVoicesError, setHermesVoicesError] = useState<string | null>(null);
-  const [testingHermesVoiceId, setTestingHermesVoiceId] = useState<string | null>(null);
+  const [voiceTtsVoices, setVoiceTtsVoices] = useState<any[]>([]);
+  const [voiceTtsVoicesLoading, setVoiceTtsVoicesLoading] = useState(false);
+  const [voiceTtsVoicesError, setVoiceTtsVoicesError] = useState<string | null>(null);
+  const [testingVoiceTtsVoiceId, setTestingVoiceTtsVoiceId] = useState<string | null>(null);
 
-  const isHermesProvider = voicePrefs.provider === 'hermes-edge' || voicePrefs.provider === 'hermes-piper';
-  const hermesEngine: 'edge' | 'piper' = voicePrefs.provider === 'hermes-piper' ? 'piper' : 'edge';
+  const isVoiceTtsProvider = voicePrefs.provider === 'voice-edge' || voicePrefs.provider === 'voice-piper';
+  const voiceEngine: 'edge' | 'piper' = voicePrefs.provider === 'voice-piper' ? 'piper' : 'edge';
 
   useEffect(() => {
-    if (!isHermesProvider) return;
+    if (!isVoiceTtsProvider) return;
     let cancelled = false;
 
-    setHermesVoicesLoading(true);
-    setHermesVoicesError(null);
+    setVoiceTtsVoicesLoading(true);
+    setVoiceTtsVoicesError(null);
 
-    fetchHermesTTSVoices(hermesEngine)
+    fetchVoiceTTSVoices(voiceEngine)
       .then((res) => {
         if (cancelled) return;
-        setHermesVoices(res.voices || []);
+        setVoiceTtsVoices(res.voices || []);
       })
       .catch((err: any) => {
         if (cancelled) return;
-        setHermesVoicesError(err?.message || 'Hermes TTS microservice unavailable');
-        setHermesVoices([]);
+        setVoiceTtsVoicesError(err?.message || 'Voice TTS service unavailable');
+        setVoiceTtsVoices([]);
       })
       .finally(() => {
-        if (!cancelled) setHermesVoicesLoading(false);
+        if (!cancelled) setVoiceTtsVoicesLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [isHermesProvider, hermesEngine]);
+  }, [isVoiceTtsProvider, voiceEngine]);
 
   // Tabs configuration
   const tabs: { id: SettingsTab; label: string; icon: React.ElementType; desc: string }[] = [
@@ -150,7 +150,7 @@ export const SettingsView: React.FC = () => {
       id: 'voice',
       label: 'Voice & Speech',
       icon: Mic,
-      desc: 'Deepgram Aura and Hermes (Edge/Piper) neural synthesis, voice selection, pitch, and rate',
+      desc: 'Deepgram Aura and Voice (Edge/Piper) neural synthesis, voice selection, pitch, and rate',
     },
     {
       id: 'engine',
@@ -193,29 +193,29 @@ export const SettingsView: React.FC = () => {
     }
   };
 
-  const handlePreviewHermesVoice = async (voiceId: string) => {
-    if (testingHermesVoiceId === voiceId) {
+  const handlePreviewVoiceTtsVoice = async (voiceId: string) => {
+    if (testingVoiceTtsVoiceId === voiceId) {
       cancelSpeaking();
-      setTestingHermesVoiceId(null);
+      setTestingVoiceTtsVoiceId(null);
       return;
     }
 
-    setTestingHermesVoiceId(voiceId);
+    setTestingVoiceTtsVoiceId(voiceId);
     setVoicePrefs({
       ...voicePrefs,
-      ...(hermesEngine === 'piper' ? { hermesPiperVoice: voiceId } : { hermesEdgeVoice: voiceId }),
+      ...(voiceEngine === 'piper' ? { piperVoice: voiceId } : { edgeVoice: voiceId }),
     });
 
-    const voiceObj = hermesVoices.find((v) => v.id === voiceId);
-    const phrase = `Hello! I am ${voiceObj ? voiceObj.name : 'Fox'}, speaking through Hermes ${
-      hermesEngine === 'piper' ? 'Piper' : 'Microsoft Edge'
+    const voiceObj = voiceTtsVoices.find((v) => v.id === voiceId);
+    const phrase = `Hello! I am ${voiceObj ? voiceObj.name : 'Fox'}, speaking through Voice ${
+      voiceEngine === 'piper' ? 'Piper' : 'Microsoft Edge'
     } text-to-speech.`;
 
     try {
       await speakText(phrase, undefined, { suppressAutoListen: true });
     } finally {
       setTimeout(() => {
-        setTestingHermesVoiceId(null);
+        setTestingVoiceTtsVoiceId(null);
       }, 3500);
     }
   };
@@ -888,17 +888,17 @@ export const SettingsView: React.FC = () => {
                     </p>
                   </button>
 
-                  {/* Hermes Microsoft Edge TTS Card */}
+                  {/* Voice Microsoft Edge TTS Card */}
                   <button
                     type="button"
                     onClick={() => {
                       setVoicePrefs({
                         ...voicePrefs,
-                        provider: 'hermes-edge',
+                        provider: 'voice-edge',
                       });
                     }}
                     className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative flex flex-col justify-between space-y-3 ${
-                      voicePrefs.provider === 'hermes-edge'
+                      voicePrefs.provider === 'voice-edge'
                         ? 'bg-cyan-950/30 border-cyan-400/50 shadow-lg ring-1 ring-cyan-400/30'
                         : 'bg-white/[0.02] border-white/[0.08] hover:bg-white/[0.05] text-neutral-300'
                     }`}
@@ -909,11 +909,11 @@ export const SettingsView: React.FC = () => {
                           <Mic className="w-4 h-4 text-neutral-300" />
                         </div>
                         <div>
-                          <div className="text-xs font-bold text-white">Hermes Edge TTS</div>
+                          <div className="text-xs font-bold text-white">Voice Edge TTS</div>
                           <div className="text-[10px] text-neutral-400">Microsoft Edge neural voices</div>
                         </div>
                       </div>
-                      {voicePrefs.provider === 'hermes-edge' && (
+                      {voicePrefs.provider === 'voice-edge' && (
                         <div
                           className="w-5 h-5 rounded-full flex items-center justify-center text-black"
                           style={{ backgroundColor: accentTheme.primary }}
@@ -923,21 +923,21 @@ export const SettingsView: React.FC = () => {
                       )}
                     </div>
                     <p className="text-[11px] text-neutral-400 leading-relaxed">
-                      Routed through the Hermes agent microservice. Free Microsoft neural voices; requires network access.
+                      Served by the voice service. Free Microsoft neural voices; requires network access.
                     </p>
                   </button>
 
-                  {/* Hermes Piper TTS Card */}
+                  {/* Voice Piper TTS Card */}
                   <button
                     type="button"
                     onClick={() => {
                       setVoicePrefs({
                         ...voicePrefs,
-                        provider: 'hermes-piper',
+                        provider: 'voice-piper',
                       });
                     }}
                     className={`p-4 rounded-2xl border text-left transition-all cursor-pointer relative flex flex-col justify-between space-y-3 ${
-                      voicePrefs.provider === 'hermes-piper'
+                      voicePrefs.provider === 'voice-piper'
                         ? 'bg-cyan-950/30 border-cyan-400/50 shadow-lg ring-1 ring-cyan-400/30'
                         : 'bg-white/[0.02] border-white/[0.08] hover:bg-white/[0.05] text-neutral-300'
                     }`}
@@ -948,11 +948,11 @@ export const SettingsView: React.FC = () => {
                           <Mic className="w-4 h-4 text-neutral-300" />
                         </div>
                         <div>
-                          <div className="text-xs font-bold text-white">Hermes Piper TTS</div>
+                          <div className="text-xs font-bold text-white">Voice Piper TTS</div>
                           <div className="text-[10px] text-neutral-400">Local offline neural synthesizer</div>
                         </div>
                       </div>
-                      {voicePrefs.provider === 'hermes-piper' && (
+                      {voicePrefs.provider === 'voice-piper' && (
                         <div
                           className="w-5 h-5 rounded-full flex items-center justify-center text-black"
                           style={{ backgroundColor: accentTheme.primary }}
@@ -962,7 +962,7 @@ export const SettingsView: React.FC = () => {
                       )}
                     </div>
                     <p className="text-[11px] text-neutral-400 leading-relaxed">
-                      Routed through the Hermes agent microservice. Runs fully offline on the Hermes host once voice models are installed.
+                      Served by the voice service. Runs fully offline once Piper voice models are installed.
                     </p>
                   </button>
                 </div>
@@ -1107,57 +1107,57 @@ export const SettingsView: React.FC = () => {
                 </div>
               )}
 
-              {/* Hermes TTS Voice Library (When Hermes Edge/Piper is active) */}
-              {isHermesProvider && (
+              {/* Voice TTS Voice Library (When Voice Edge/Piper is active) */}
+              {isVoiceTtsProvider && (
                 <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div className="space-y-1">
                       <div className="flex items-center space-x-2">
                         <Mic className="w-4 h-4 text-cyan-400" />
                         <h3 className="text-sm font-semibold text-white">
-                          Hermes {hermesEngine === 'piper' ? 'Piper' : 'Microsoft Edge'} Voice Library
+                          Voice {voiceEngine === 'piper' ? 'Piper' : 'Microsoft Edge'} Library
                         </h3>
                       </div>
                       <p className="text-xs text-neutral-400">
-                        {hermesEngine === 'piper'
-                          ? 'Voices installed on the Hermes host in api/agent/Tts/piper_models.'
-                          : 'Live catalog fetched from the Hermes agent microservice.'}
+                        {voiceEngine === 'piper'
+                          ? 'Voices installed in voice/tts/piper_models.'
+                          : 'Live catalog fetched from the voice service.'}
                       </p>
                     </div>
                     <span className="text-[10px] font-mono text-neutral-400 self-start sm:self-auto">
-                      Active: {(hermesEngine === 'piper' ? voicePrefs.hermesPiperVoice : voicePrefs.hermesEdgeVoice) || 'default'}
+                      Active: {(voiceEngine === 'piper' ? voicePrefs.piperVoice : voicePrefs.edgeVoice) || 'default'}
                     </span>
                   </div>
 
-                  {hermesVoicesLoading && (
-                    <div className="text-xs text-neutral-400">Loading voices from Hermes agent...</div>
+                  {voiceTtsVoicesLoading && (
+                    <div className="text-xs text-neutral-400">Loading voices from the voice service...</div>
                   )}
 
-                  {!hermesVoicesLoading && hermesVoicesError && (
+                  {!voiceTtsVoicesLoading && voiceTtsVoicesError && (
                     <div className="text-xs text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
-                      {hermesVoicesError}. Make sure the Hermes Python microservice is running.
+                      {voiceTtsVoicesError}. Make sure the voice container is running.
                     </div>
                   )}
 
-                  {!hermesVoicesLoading && !hermesVoicesError && hermesVoices.length === 0 && (
+                  {!voiceTtsVoicesLoading && !voiceTtsVoicesError && voiceTtsVoices.length === 0 && (
                     <div className="text-xs text-neutral-400">
-                      No voices found{hermesEngine === 'piper' ? ' in api/agent/Tts/piper_models' : ''}.
+                      No voices found{voiceEngine === 'piper' ? ' in voice/tts/piper_models' : ''}.
                     </div>
                   )}
 
-                  {!hermesVoicesLoading && hermesVoices.length > 0 && (
+                  {!voiceTtsVoicesLoading && voiceTtsVoices.length > 0 && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
-                      {hermesVoices.map((voice) => {
+                      {voiceTtsVoices.map((voice) => {
                         const isSelected =
-                          (hermesEngine === 'piper' ? voicePrefs.hermesPiperVoice : voicePrefs.hermesEdgeVoice) === voice.id;
-                        const isTestingThis = testingHermesVoiceId === voice.id;
+                          (voiceEngine === 'piper' ? voicePrefs.piperVoice : voicePrefs.edgeVoice) === voice.id;
+                        const isTestingThis = testingVoiceTtsVoiceId === voice.id;
                         return (
                           <div
                             key={voice.id}
                             onClick={() =>
                               setVoicePrefs({
                                 ...voicePrefs,
-                                ...(hermesEngine === 'piper' ? { hermesPiperVoice: voice.id } : { hermesEdgeVoice: voice.id }),
+                                ...(voiceEngine === 'piper' ? { piperVoice: voice.id } : { edgeVoice: voice.id }),
                               })
                             }
                             className={`p-3 rounded-2xl border cursor-pointer space-y-2 transition-all ${
@@ -1191,7 +1191,7 @@ export const SettingsView: React.FC = () => {
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handlePreviewHermesVoice(voice.id);
+                                  handlePreviewVoiceTtsVoice(voice.id);
                                 }}
                                 className={`px-2.5 py-1 rounded-xl text-[10px] font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${
                                   isTestingThis

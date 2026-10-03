@@ -7,9 +7,9 @@ import {
   handleDeepgramTTS,
   handleGetDeepgramVoices,
   handleHermesAgent,
-  handleHermesTTS,
-  handleGetHermesTTSEngines,
-  handleGetHermesTTSVoices,
+  handleVoiceTTS,
+  handleGetVoiceTTSEngines,
+  handleGetVoiceTTSVoices,
   handleDetectTools,
 } from '../controllers/assistant.controller';
 
@@ -36,14 +36,14 @@ router.post('/tts', handleDeepgramTTS);
 // Available Deepgram Voices catalog
 router.get('/voices', handleGetDeepgramVoices);
 
-// Hermes Agent Text-to-Speech (Microsoft Edge TTS & Piper TTS, via Python microservice)
-router.post('/hermes-tts', handleHermesTTS);
+// Voice Text-to-Speech (Microsoft Edge TTS & Piper TTS, served by the voice container)
+router.post('/voice-tts', handleVoiceTTS);
 
-// Available Hermes TTS engines & their availability status
-router.get('/hermes-tts/engines', handleGetHermesTTSEngines);
+// Available Voice TTS engines & their availability status
+router.get('/voice-tts/engines', handleGetVoiceTTSEngines);
 
-// Available voices for a given Hermes TTS engine
-router.get('/hermes-tts/voices', handleGetHermesTTSVoices);
+// Available voices for a given Voice TTS engine
+router.get('/voice-tts/voices', handleGetVoiceTTSVoices);
 
 // Specialized assistant tools
 router.post('/tools', handleAssistantTools);

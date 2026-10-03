@@ -588,9 +588,9 @@ export const QuickAccessPanel: React.FC<QuickAccessPanelProps> = ({ isOpen, onCl
                       Deepgram
                     </button>
                     <button
-                      onClick={() => setVoicePrefs({ ...voicePrefs, provider: 'hermes-edge' })}
+                      onClick={() => setVoicePrefs({ ...voicePrefs, provider: 'voice-edge' })}
                       className={`px-2 py-2 rounded-xl text-[10px] font-bold transition-all border cursor-pointer ${
-                        voicePrefs.provider === 'hermes-edge'
+                        voicePrefs.provider === 'voice-edge'
                           ? 'bg-cyan-500/20 border-cyan-500/40 text-white shadow-sm'
                           : 'bg-white/[0.03] border-white/[0.06] text-neutral-400 hover:text-white'
                       }`}
@@ -598,9 +598,9 @@ export const QuickAccessPanel: React.FC<QuickAccessPanelProps> = ({ isOpen, onCl
                       Edge TTS
                     </button>
                     <button
-                      onClick={() => setVoicePrefs({ ...voicePrefs, provider: 'hermes-piper' })}
+                      onClick={() => setVoicePrefs({ ...voicePrefs, provider: 'voice-piper' })}
                       className={`px-2 py-2 rounded-xl text-[10px] font-bold transition-all border cursor-pointer ${
-                        voicePrefs.provider === 'hermes-piper'
+                        voicePrefs.provider === 'voice-piper'
                           ? 'bg-cyan-500/20 border-cyan-500/40 text-white shadow-sm'
                           : 'bg-white/[0.03] border-white/[0.06] text-neutral-400 hover:text-white'
                       }`}

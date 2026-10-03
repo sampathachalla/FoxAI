@@ -196,12 +196,12 @@ export async function fetchDeepgramVoices(): Promise<DeepgramVoicesResponse> {
   return response.json();
 }
 
-export async function fetchHermesTTS(
+export async function fetchVoiceTTS(
   text: string,
   engine: 'edge' | 'piper' = 'edge',
   voice?: string
 ): Promise<Blob> {
-  const response = await fetch(apiUrl('/api/assistant/hermes-tts'), {
+  const response = await fetch(apiUrl('/api/assistant/voice-tts'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -210,27 +210,27 @@ export async function fetchHermesTTS(
   });
 
   if (!response.ok) {
-    const err = await response.json().catch(() => ({ error: 'Hermes TTS synthesis failed' }));
-    throw new Error(err.error || `Hermes TTS synthesis failed with status ${response.status}`);
+    const err = await response.json().catch(() => ({ error: 'Voice TTS synthesis failed' }));
+    throw new Error(err.error || `Voice TTS synthesis failed with status ${response.status}`);
   }
 
   return response.blob();
 }
 
-export async function fetchHermesTTSEngines(): Promise<{ success: boolean; engines: any[] }> {
-  const response = await fetch(apiUrl('/api/assistant/hermes-tts/engines'));
+export async function fetchVoiceTTSEngines(): Promise<{ success: boolean; engines: any[] }> {
+  const response = await fetch(apiUrl('/api/assistant/voice-tts/engines'));
   if (!response.ok) {
-    throw new Error('Failed to fetch Hermes TTS engines');
+    throw new Error('Failed to fetch Voice TTS engines');
   }
   return response.json();
 }
 
-export async function fetchHermesTTSVoices(
+export async function fetchVoiceTTSVoices(
   engine: 'edge' | 'piper' = 'edge'
 ): Promise<{ success: boolean; engine: string; voices: any[] }> {
-  const response = await fetch(apiUrl(`/api/assistant/hermes-tts/voices?engine=${encodeURIComponent(engine)}`));
+  const response = await fetch(apiUrl(`/api/assistant/voice-tts/voices?engine=${encodeURIComponent(engine)}`));
   if (!response.ok) {
-    throw new Error('Failed to fetch Hermes TTS voices');
+    throw new Error('Failed to fetch Voice TTS voices');
   }
   return response.json();
 }

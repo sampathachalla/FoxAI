@@ -140,8 +140,8 @@ export function useLiveKitVoice(
     connected,
     voicePrefs?.provider,
     voicePrefs?.deepgramVoice,
-    voicePrefs?.hermesEdgeVoice,
-    voicePrefs?.hermesPiperVoice,
+    voicePrefs?.edgeVoice,
+    voicePrefs?.piperVoice,
   ]);
 
   return {

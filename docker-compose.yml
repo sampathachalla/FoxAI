@@ -5,33 +5,20 @@ x-common: &common
   networks:
     - fox-network
 
-services:
-  web:
-    <<: *common
-    # UI shell: React/Vite today; Next.js and Picovoice are planned capabilities.
-    labels:
-      fox.layer: web
-      fox.current-stack: "React 19, Vite, LiveKit client"
-      fox.planned-stack: "Next.js, Picovoice wake word"
-    build:
-      context: ./app
-      dockerfile: Dockerfile
-    container_name: fox-web
-    working_dir: /app
-    env_file:
-      - path: ./deploy/env/web.env
-        required: false
-    environment:
-      VITE_PROXY_TARGET: http://api:3001
-    ports:
-      - "${WEB_PORT:-3000}:3000"
-    volumes:
-      - ./app:/app
-      - web-node-modules:/app/node_modules
-    depends_on:
-      api:
-        condition: service_healthy
+# OpenTelemetry settings shared by every instrumented service. Each service
+# adds its own OTEL_SERVICE_NAME. Set OTEL_SDK_DISABLED=true (e.g. in a root
+# .env file) to turn telemetry off without removing the observability service.
+x-otel: &otel
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://observability:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_METRICS_EXPORTER: otlp
+  OTEL_LOGS_EXPORTER: otlp
+  OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "true"
+  OTEL_RESOURCE_ATTRIBUTES: service.namespace=fox,deployment.environment.name=${FOX_ENVIRONMENT:-development}
+  OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
 
+services:
   api:
     <<: *common
     # Public boundary for REST, WebSocket/streaming, auth and service routing.
@@ -47,10 +34,17 @@ services:
       - path: ./deploy/env/api.env
         required: false
     environment:
+      <<: *otel
+      OTEL_SERVICE_NAME: fox-api
+      # Loads OpenTelemetry's zero-code Node instrumentation before the app.
+      NODE_OPTIONS: --require @opentelemetry/auto-instrumentations-node/register
+      # Skip cloud-provider metadata probes (AWS/GCP/Azure) outside the cloud.
+      OTEL_NODE_RESOURCE_DETECTORS: env,host,os,process,serviceinstance,container
       PORT: "3001"
       NODE_ENV: ${NODE_ENV:-development}
-      HERMES_FASTAPI_URL: http://agent:8000
-      LOCAL_LLM_BASE_URL: http://local-llm:11434
+      HERMES_URL: http://hermes:8000
+      HERMES_GATEWAY_KEY: ${HERMES_GATEWAY_KEY:-fox-dev-only-hermes-key}
+      VOICE_TTS_URL: http://voice:8200
       DATABASE_URL: postgresql://${POSTGRES_USER:-fox}:${POSTGRES_PASSWORD:-fox-dev-only}@postgres:5432/${POSTGRES_DB:-fox}
     ports:
       - "${API_PORT:-3001}:3001"
@@ -58,8 +52,10 @@ services:
       - ./api:/app
       - api-node-modules:/app/node_modules
     depends_on:
-      agent:
-        condition: service_healthy
+      hermes:
+        condition: service_started
+      voice:
+        condition: service_started
       postgres:
         condition: service_healthy
     healthcheck:
@@ -69,63 +65,134 @@ services:
       retries: 10
       start_period: 20s
 
-  agent:
+  hermes:
     <<: *common
-    # Reasoning/orchestration: Hermes, tools, workflows and worker delegation.
+    # Reasoning/orchestration: upstream Nous Research Hermes and Agent Reach,
+    # served by Hermes' own OpenAI-compatible API server. Fox's own tools come
+    # from mcp-server over MCP (see agents/hermes/config.yaml).
     labels:
       fox.layer: agent
-      fox.current-stack: "FastAPI, Hermes, Agent Reach, tool registry"
-      fox.planned-stack: "MCP, workflows, Graphiti, telemetry emitters"
+      fox.current-stack: "Nous Research Hermes gateway, Agent Reach, MCP client"
+      fox.planned-stack: "workflows, Graphiti, telemetry emitters"
     build:
-      context: ./api/agent
-      dockerfile: Dockerfile.agent
+      context: ./agents
+      dockerfile: ../deploy/docker/agents.Dockerfile
       args:
         HERMES_UPSTREAM_REF: ${HERMES_UPSTREAM_REF:-v2026.8.27}
-    container_name: fox-agent
+    container_name: fox-hermes
     env_file:
-      - path: ./deploy/env/agent.env
+      - path: ./deploy/env/hermes.env
         required: false
     environment:
-      FASTAPI_PORT: "8000"
-      HERMES_UPSTREAM_PATH: /opt/hermes-agent
-      LOCAL_LLM_BASE_URL: http://local-llm:11434
-      DATABASE_URL: postgresql://${POSTGRES_USER:-fox}:${POSTGRES_PASSWORD:-fox-dev-only}@postgres:5432/${POSTGRES_DB:-fox}
+      <<: *otel
+      OTEL_SERVICE_NAME: fox-hermes
+      # Bearer key for Hermes' API server; api and voice send the same value.
+      API_SERVER_KEY: ${HERMES_GATEWAY_KEY:-fox-dev-only-hermes-key}
+      FOX_MCP_URL: http://mcp-server:8100/mcp
     ports:
-      - "${AGENT_PORT:-8000}:8000"
+      - "${HERMES_PORT:-8000}:8000"
     volumes:
       - agent-reach-data:/root/.agent-reach
     depends_on:
-      postgres:
+      mcp-server:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
       interval: 10s
       timeout: 5s
       retries: 12
-      start_period: 30s
+      start_period: 60s
+
+  mcp-server:
+    <<: *common
+    # Fox's own tools over MCP, used by Hermes.
+    labels:
+      fox.layer: tools
+      fox.current-stack: "MCP Python SDK, Streamable HTTP"
+      fox.planned-stack: "persistent notes/reminders, data-backed tools"
+    build:
+      context: ./mcp-server
+      dockerfile: Dockerfile
+    container_name: fox-mcp-server
+    environment:
+      <<: *otel
+      OTEL_SERVICE_NAME: fox-mcp-server
+      DATABASE_URL: postgresql://${POSTGRES_USER:-fox}:${POSTGRES_PASSWORD:-fox-dev-only}@postgres:5432/${POSTGRES_DB:-fox}
+    ports:
+      - "${MCP_SERVER_PORT:-8100}:8100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
   voice:
     <<: *common
-    # Realtime ears/mouth: LiveKit transport, STT, TTS and turn detection.
+    # Realtime ears/mouth: LiveKit transport, STT, TTS and turn detection, plus
+    # HTTP Edge/Piper speech (:8200) for the API's non-LiveKit voice path.
     labels:
       fox.layer: voice
       fox.current-stack: "LiveKit Agents, Groq Whisper, Edge/Piper/Deepgram TTS"
       fox.planned-stack: "additional local and cloud voice providers"
     build:
-      context: ./api/agent
-      dockerfile: Dockerfile.voice
+      context: ./voice
+      dockerfile: Dockerfile
     container_name: fox-voice
     env_file:
       - path: ./deploy/env/voice.env
         required: false
     environment:
-      HERMES_FASTAPI_URL: http://agent:8000
+      <<: *otel
+      HERMES_URL: http://hermes:8000
+      HERMES_GATEWAY_KEY: ${HERMES_GATEWAY_KEY:-fox-dev-only-hermes-key}
       VOICE_TTS_PROVIDER: ${VOICE_TTS_PROVIDER:-edge}
+    ports:
+      - "${VOICE_TTS_PORT:-8200}:8200"
     volumes:
-      - ./api/agent/tts/piper_models:/app/tts/piper_models:ro
+      - ./voice/tts/piper_models:/app/tts/piper_models:ro
     depends_on:
-      agent:
-        condition: service_healthy
+      hermes:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8200/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  observability:
+    <<: *common
+    # Traces, metrics and logs for every service, with Grafana dashboards.
+    # Grafana (Tempo traces, Loki logs, Prometheus metrics, Pyroscope
+    # profiles) behind one OpenTelemetry collector.
+    labels:
+      fox.layer: observability
+      fox.current-stack: "Grafana LGTM: OpenTelemetry Collector, Tempo, Loki, Prometheus, Pyroscope, Grafana"
+    image: grafana/otel-lgtm:0.35.0
+    container_name: fox-observability
+    env_file:
+      - path: ./deploy/env/observability.env
+        required: false
+    environment:
+      # Require a Grafana login (the image defaults to anonymous admin access).
+      # Credentials come from deploy/env/observability.env.
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    ports:
+      - "${GRAFANA_PORT:-3100}:3000"
+      - "${OTLP_GRPC_PORT:-4317}:4317"
+      - "${OTLP_HTTP_PORT:-4318}:4318"
+    volumes:
+      - observability-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
   postgres:
     <<: *common
@@ -208,41 +275,15 @@ services:
       timeout: 5s
       retries: 10
 
-  local-llm:
-    <<: *common
-    # Local inference endpoint for small/open models and offline operation.
-    labels:
-      fox.layer: model-runtime
-      fox.current-stack: "Ollama"
-      fox.use-cases: "local LLM inference, embeddings, offline fallback"
-    image: ollama/ollama:latest
-    container_name: fox-local-llm
-    env_file:
-      - path: ./deploy/env/local-llm.env
-        required: false
-    environment:
-      OLLAMA_HOST: 0.0.0.0:11434
-    ports:
-      - "${LOCAL_LLM_PORT:-11434}:11434"
-    volumes:
-      - ollama-data:/root/.ollama
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 20s
-
 networks:
   fox-network:
     name: fox-network
     driver: bridge
 
 volumes:
-  web-node-modules:
   api-node-modules:
+  observability-data:
   agent-reach-data:
   postgres-data:
   neo4j-data:
   minio-data:
-  ollama-data:

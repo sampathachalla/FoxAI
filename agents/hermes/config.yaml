@@ -1,0 +1,41 @@
+# Hermes config. At container start the ${VAR} values below are filled in
+# from the environment (see deploy/env/hermes.env) and the result is written to
+# ~/.hermes/config.yaml; Hermes fills in defaults for everything not set here.
+
+model:
+  provider: custom
+  default: ${HERMES_MODEL}
+  base_url: ${HERMES_BASE_URL}
+  api_key: ${HERMES_API_KEY}
+
+agent:
+  max_turns: 8
+
+tools:
+  # Fox's MCP server only exposes a handful of small tools, so give them to
+  # the model directly instead of hiding them behind the tool_search bridge
+  # (which costs an extra model round-trip per tool call).
+  tool_search: false
+
+mcp_servers:
+  fox:
+    url: ${FOX_MCP_URL}
+    timeout: 60
+    connect_timeout: 15
+    # The Fox server only serves tools; skip Hermes' resource/prompt helpers.
+    tools:
+      resources: false
+      prompts: false
+
+# Hermes' built-in gateway health metrics and diagnostic logs, sent to the
+# observability container. Request traces come from opentelemetry-instrument.
+monitoring:
+  gateway_health_export:
+    enabled: true
+    # Reported as service "hermes-gateway" (fixed by Hermes).
+    resource_attributes:
+      deployment.environment.name: development
+  export:
+    otlp:
+      enabled: true
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT}/v1/traces

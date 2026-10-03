@@ -5,8 +5,6 @@ coverage/
 .DS_Store
 *.log
 *.jsonl
-api/agent/logs/*
-!api/agent/logs/.gitkeep
 __pycache__/
 *.pyc
 *.pyo

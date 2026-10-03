@@ -92,10 +92,10 @@ export interface DeepgramVoiceItem {
 }
 
 export interface VoicePreference {
-  provider?: 'deepgram' | 'webspeech' | 'hermes-edge' | 'hermes-piper' | 'auto';
+  provider?: 'deepgram' | 'webspeech' | 'voice-edge' | 'voice-piper' | 'auto';
   deepgramVoice?: string;
-  hermesEdgeVoice?: string;
-  hermesPiperVoice?: string;
+  edgeVoice?: string;
+  piperVoice?: string;
   voiceURI: string;
   pitch: number;
   rate: number;

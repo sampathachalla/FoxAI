@@ -8,10 +8,10 @@ import {
   DEEPGRAM_AURA_VOICES,
 } from '../services/deepgram.service';
 import {
-  synthesizeHermesSpeech,
-  getHermesTTSEngines,
-  getHermesTTSVoices,
-} from '../services/hermes.client';
+  synthesizeVoiceSpeech,
+  getVoiceTTSEngines,
+  getVoiceTTSVoices,
+} from '../services/voiceTts.client';
 import {
   checkWakeWordHealth,
   getWakeWordWebSocketUrl,
@@ -36,7 +36,7 @@ export async function handleAssistantChat(req: Request, res: Response): Promise<
         }))
       : [];
 
-    // 1. Try Hermes Python FastAPI Microservice first
+    // 1. Try Hermes (hermes container) first
     try {
       const { callHermesPythonService } = await import('../services/hermes.client');
       const pyResult = await callHermesPythonService(prompt, chatHistory, model, temperature);
@@ -199,7 +199,7 @@ export async function handleGetDeepgramVoices(req: Request, res: Response): Prom
   });
 }
 
-export async function handleHermesTTS(req: Request, res: Response): Promise<void> {
+export async function handleVoiceTTS(req: Request, res: Response): Promise<void> {
   try {
     const { text, engine, voice } = req.body;
 
@@ -209,43 +209,43 @@ export async function handleHermesTTS(req: Request, res: Response): Promise<void
     }
 
     const selectedEngine: 'edge' | 'piper' = engine === 'piper' ? 'piper' : 'edge';
-    const { buffer, contentType } = await synthesizeHermesSpeech(text, selectedEngine, voice);
+    const { buffer, contentType } = await synthesizeVoiceSpeech(text, selectedEngine, voice);
 
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Length', buffer.length);
     res.setHeader('Cache-Control', 'public, max-age=3600');
     res.send(buffer);
   } catch (error: any) {
-    console.error('[Hermes TTS Controller] Error in handleHermesTTS:', error);
+    console.error('[Voice TTS Controller] Error in handleVoiceTTS:', error);
     res.status(503).json({
-      error: error?.message || 'Failed to synthesize voice with Hermes TTS',
+      error: error?.message || 'Failed to synthesize voice with Voice TTS',
       fallback: true,
     });
   }
 }
 
-export async function handleGetHermesTTSEngines(req: Request, res: Response): Promise<void> {
+export async function handleGetVoiceTTSEngines(req: Request, res: Response): Promise<void> {
   try {
-    const engines = await getHermesTTSEngines();
+    const engines = await getVoiceTTSEngines();
     res.json({ success: true, engines });
   } catch (error: any) {
     res.status(503).json({
       success: false,
-      error: error?.message || 'Hermes TTS microservice unavailable',
+      error: error?.message || 'Voice TTS service unavailable',
       engines: [],
     });
   }
 }
 
-export async function handleGetHermesTTSVoices(req: Request, res: Response): Promise<void> {
+export async function handleGetVoiceTTSVoices(req: Request, res: Response): Promise<void> {
   try {
     const engine = req.query.engine === 'piper' ? 'piper' : 'edge';
-    const voices = await getHermesTTSVoices(engine);
+    const voices = await getVoiceTTSVoices(engine);
     res.json({ success: true, engine, voices });
   } catch (error: any) {
     res.status(503).json({
       success: false,
-      error: error?.message || 'Hermes TTS microservice unavailable',
+      error: error?.message || 'Voice TTS service unavailable',
       voices: [],
     });
   }
@@ -349,7 +349,7 @@ export async function handleHermesAgent(req: Request, res: Response): Promise<vo
         }))
       : [];
 
-    // 1. Try Python FastAPI microservice first
+    // 1. Try Hermes (hermes container) first
     try {
       const { callHermesPythonService } = await import('../services/hermes.client');
       const pyResult = await callHermesPythonService(prompt, agentHistory, model, temperature);
@@ -358,7 +358,7 @@ export async function handleHermesAgent(req: Request, res: Response): Promise<vo
           success: true,
           data: {
             ...pyResult.data,
-            engine: 'Hermes Python FastAPI Microservice',
+            engine: 'Nous Research Hermes',
             timestamp: Date.now(),
           },
         });

@@ -331,9 +331,16 @@ export const StorageService = {
       const data = localStorage.getItem(STORAGE_KEYS.VOICE);
       if (data) {
         const parsed = JSON.parse(data);
+        // Edge/Piper used to be labelled "Hermes"; carry old saved choices over.
+        const legacyProviders: Record<string, VoicePreference['provider']> = {
+          'hermes-edge': 'voice-edge',
+          'hermes-piper': 'voice-piper',
+        };
         return {
-          provider: parsed.provider || 'auto',
+          provider: legacyProviders[parsed.provider] || parsed.provider || 'auto',
           deepgramVoice: parsed.deepgramVoice || 'aura-2-asteria-en',
+          edgeVoice: parsed.edgeVoice || parsed.hermesEdgeVoice || '',
+          piperVoice: parsed.piperVoice || parsed.hermesPiperVoice || '',
           voiceURI: parsed.voiceURI || '',
           pitch: parsed.pitch ?? 1.0,
           rate: parsed.rate ?? 1.05,
